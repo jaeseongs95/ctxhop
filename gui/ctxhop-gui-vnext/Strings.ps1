@@ -7,7 +7,8 @@ function T([string]$Key) {
     $pair=$script:StringTable[$Key]
     if ($null -eq $pair) { throw "Missing UI string: $Key" }
     $text=$pair[[int]($script:UiLanguage -eq 'en')]
-    if ($args.Count) { return ($text -f $args) }
+    # 배열 인수는 문자열 보간처럼 공백으로 잇는다(-f는 System.Object[]로 찍음).
+    if ($args.Count) { return ($text -f @(foreach ($arg in $args) { if ($arg -is [array]) { $arg -join ' ' } else { $arg } })) }
     return $text
 }
 $script:StringTable=@{
@@ -76,7 +77,7 @@ $script:StringTable=@{
     GuiReviewCancelAll=@('전체 취소','Cancel all')
     GuiAllSkipped=@('모든 항목을 유지·건너뛰기로 선택했습니다. 복원하지 않았습니다.','All items are set to Keep local or Skip. Nothing was restored.')
     GuiRestoreFolder=@('복원 폴더: {0}','Restore folder: {0}')
-    GuiApplyCount=@('선택한 {0}개 항목을 복원합니다.','Restoring {0} selected items.')
+    GuiApplyCount=@('선택한 {0}개 항목을 복원합니다.','Restore {0} selected item(s)?')
     GuiApplyWarning=@('원본은 백엔드 복구 기록으로 보관합니다. Codex 앱을 직접 종료하고 Drive 다운로드 완료를 확인하세요.','The originals are kept in the backend recovery record. Quit the Codex app yourself and make sure the Drive download is complete.')
     GuiReviewCancelled=@('복원 확인을 취소했습니다. 로컬 대화를 변경하지 않았습니다.','Restore review cancelled. Local conversations were not changed.')
     GuiApplyDone=@('선택한 Codex 항목 처리를 마쳤습니다. 항목별 결과(복원 완료/변경 없음)는 아래 기록에서 확인하세요.','Selected Codex items are done. See the log below for each result (restored/unchanged).')
