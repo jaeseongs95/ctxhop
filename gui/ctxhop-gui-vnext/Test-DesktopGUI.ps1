@@ -96,6 +96,23 @@ try {
     # 작업 취소는 GUI가 띄운 작업 창과 그 하위 프로세스만 끝낸다. 이름으로 찾아 끄지 않으므로 Codex·Claude 앱은 건드리지 않는다.
     Assert ($source -notmatch 'Stop-Process\s+-Name|Get-Process|\.Kill\(|taskkill') 'GUI never kills processes by name, so the Codex and Claude apps are never force-closed'
     Assert ([regex]::Matches($source,'Stop-Process ').Count -eq 1 -and [regex]::Matches($source,'Stop-ProcessTree \$pending\.process\.Id').Count -eq 1 -and $source -match "action -in @\('Restore','Open'\)\) \{ return \}") 'GUI stops only the worker tree it started, and never during Restore or Open'
+    # 부모보다 먼저 생긴 "자식"은 끝난 프로세스의 PID를 물려받은 다른 프로그램(예: 런처가 띄운 앱)이므로 끝내지 않는다. 부모부터 끝낸다.
+    $stopped = & {
+        function Get-CimInstance {
+            $at={ param($second) [datetime]::new(2026,1,1,0,0,$second) }
+            @([pscustomobject]@{ProcessId=10;ParentProcessId=1;CreationDate=(& $at 10)},
+              [pscustomobject]@{ProcessId=11;ParentProcessId=10;CreationDate=(& $at 11)},
+              [pscustomobject]@{ProcessId=12;ParentProcessId=11;CreationDate=(& $at 12)},
+              [pscustomobject]@{ProcessId=13;ParentProcessId=11;CreationDate=(& $at 9)},
+              [pscustomobject]@{ProcessId=5;ParentProcessId=10;CreationDate=(& $at 5)},
+              [pscustomobject]@{ProcessId=6;ParentProcessId=5;CreationDate=(& $at 6)})
+        }
+        $calls=[Collections.Generic.List[int]]::new()
+        function Stop-Process([int]$Id,[switch]$Force,$ErrorAction) { $calls.Add($Id) }
+        Stop-ProcessTree 10
+        $calls -join ','
+    }
+    Assert ($stopped -eq '10,11,12') "cancel stops the worker first, then only children created after their parent: $stopped"
     Assert (-not (Test-Path -LiteralPath (Join-Path $testDirectory 'CtxHopGUI\vnext-preferences.json'))) 'isolated GUI tests never save user preferences'
     Write-Output "PASS: $script:Checks isolated Desktop GUI assertions. No native apps or user stores invoked."
 } finally {

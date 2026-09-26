@@ -343,7 +343,7 @@ function Load-Bindings {
     if (Test-Path -LiteralPath $configFile) {
         try {
             $config=Get-Content -LiteralPath $configFile -Raw -Encoding UTF8 | ConvertFrom-Json
-            $script:Bindings=@($config.projects.bindings)
+            $script:Bindings=@($config.projects.bindings | Where-Object { $_ -and $_.localRoot })
             foreach ($binding in $script:Bindings) { $projectPicker.Items.Add("$($binding.identity) · $($binding.localRoot)") | Out-Null }
         } catch {}
     }
@@ -424,13 +424,22 @@ $null=New-Control Label 22 368 956 76 "$(T 'GuiSettingsNote1')`r`n$(T 'GuiSettin
 $settings.AutoScroll=$true
 $status=New-Control Label 24 595 860 38 (T 'GuiStatusInitial') $form
 function Stop-ProcessTree([int]$Id) {
-    foreach ($child in @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$Id")) { Stop-ProcessTree $child.ProcessId }
-    Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue
+    # 프로세스 표를 한 번만 읽어 트리를 정하고, 부모부터 끝내 끝내는 사이 새 자식이 생기지 않게 한다.
+    # Windows는 부모가 끝나도 ParentProcessId를 그대로 두고 PID를 재사용하므로, 부모보다 먼저 생긴 "자식"은 다른 프로그램의 것으로 보고 건드리지 않는다.
+    $all=@(Get-CimInstance Win32_Process)
+    $tree=@($all | Where-Object { $_.ProcessId -eq $Id })
+    for ($i=0; $i -lt $tree.Count; $i++) {
+        $parent=$tree[$i]
+        $tree+=@($all | Where-Object { $_.ParentProcessId -eq $parent.ProcessId -and $_.CreationDate -gt $parent.CreationDate })
+    }
+    foreach ($process in $tree) { Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 $cancelButton=New-Button 900 591 148 (T 'GuiCancelJob') $form {
     $pending=$script:Pending
     if (-not $pending -or $pending.job.action -in @('Restore','Open')) { return }
     if ($pending.job.action -ne 'List' -and -not (Confirm (T 'GuiCancelConfirm' $pending.job.action))) { return }
+    # 확인 창이 떠 있는 동안 작업이 끝났으면 그 결과를 그대로 보여 주고, 이어서 시작된 작업도 건드리지 않는다.
+    if (-not [object]::ReferenceEquals($pending,$script:Pending) -or $pending.process.HasExited) { return }
     $pending.cancelled=$true
     $cancelButton.Enabled=$false
     # 작업 창과 그 안의 ctxhop·Python까지 끝낸다. 결과는 Finish-Job이 버린다.
@@ -441,12 +450,15 @@ $cancelButton.Enabled=$false; $cancelButton.Anchor='Bottom,Right'
 $tips=[Windows.Forms.ToolTip]::new()
 $tips.SetToolTip($backupButton,(T 'GuiTipBackup')); $tips.SetToolTip($restoreButton,(T 'GuiTipRestore')); $tips.SetToolTip($openButton,(T 'GuiTipOpen'))
 $tips.SetToolTip($registerButton,(T 'GuiTipRegister')); $tips.SetToolTip($unbindButton,(T 'GuiTipUnbind')); $tips.SetToolTip($cancelButton,(T 'GuiTipCancel'))
-# 꺼진 버튼은 툴팁을 띄우지 않으므로, 탭 위에서 마우스 아래의 꺼진 버튼 설명을 탭의 툴팁으로 대신 띄운다.
-$main.Add_MouseMove({
-    $hit=$main.GetChildAtPoint($_.Location)
-    $text=if ($hit -and -not $hit.Enabled) {$tips.GetToolTip($hit)} else {''}
-    if ($tips.GetToolTip($main) -ne $text) { $tips.SetToolTip($main,$text) }
-})
+# 꺼진 버튼은 툴팁을 띄우지 않으므로, 마우스 아래의 꺼진 버튼 설명을 그 버튼이 놓인 탭·창의 툴팁으로 대신 띄운다.
+foreach ($surface in @($main,$form)) {
+    $surface.Add_MouseMove({
+        param($sender,$e)
+        $hit=$sender.GetChildAtPoint($e.Location)
+        $text=if ($hit -and -not $hit.Enabled) {$tips.GetToolTip($hit)} else {''}
+        if ($tips.GetToolTip($sender) -ne $text) { $tips.SetToolTip($sender,$text) }
+    })
+}
 $status.Anchor='Bottom,Left,Right'
 $progress=New-Control ProgressBar 24 634 1025 8 '' $form; $progress.Anchor='Bottom,Left,Right'
 $log=New-Control TextBox 24 651 1025 58 '' $form; $log.Multiline=$true; $log.ReadOnly=$true; $log.ScrollBars='Vertical'; $log.Anchor='Bottom,Left,Right'

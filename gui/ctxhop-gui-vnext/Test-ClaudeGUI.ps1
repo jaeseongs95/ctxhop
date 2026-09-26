@@ -72,6 +72,8 @@ try {
         Assert ($script:Answers.Count -gt 0) 'Unexpected confirmation dialog.'
         $answer = $script:Answers[0]
         $script:Answers = @($script:Answers | Select-Object -Skip 1)
+        # 확인 창이 떠 있는 동안 일어나는 일은 스크립트 블록 답으로 흉내 낸다.
+        if ($answer -is [scriptblock]) { return (& $answer) }
         return $answer
     }
     $stubPath = Join-Path $fixtureRoot 'Worker.ps1'
@@ -247,6 +249,11 @@ if ($job.action -eq 'Restore') { $data.restored=@{session=$job.nativeId;agent=$j
     $script:Answers = @($false)
     $cancelButton.PerformClick()
     Assert (-not $script:Pending.cancelled -and -not $statusProcess.HasExited) 'Declining the cancel confirmation must keep the task running.'
+    $running = $script:Pending
+    $script:Answers = @({ $script:Pending = $running.Clone(); $true })
+    $cancelButton.PerformClick()
+    Assert (-not $running.cancelled -and -not $script:Pending.cancelled -and -not $statusProcess.HasExited) 'A task that finished while the cancel confirmation was open, and the task after it, must not be stopped.'
+    $script:Pending = $running
     $script:Answers = @($true)
     $cancelButton.PerformClick()
     Assert ($script:Pending.cancelled -and $statusProcess.WaitForExit(5000)) 'Cancelling a task must stop the worker process it started.'
