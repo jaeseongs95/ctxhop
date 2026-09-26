@@ -21,6 +21,8 @@ CtxHop은 Claude Code와 Codex 세션을 기기 사이에서 옮기는 로컬 �
 
 Session Hub는 각 에이전트의 네이티브 세션을 논리 세션으로 묶고 원본 기록을 보존합니다. 고른 컨텍스트로 대상 에이전트의 네이티브 세션을 만들어 에이전트를 바꿀 수도 있습니다. 작업 공간과 Git 상태는 명시적으로 요청할 때만 넘기며, 로컬 암호화와 기기 승인이 동기화 경계를 보호합니다.
 
+> **이 포크**(`jaeseongs95/ctxhop`)는 Claude Code와 Codex Desktop 대화용 [Windows GUI](#windows-gui-이-포크)를 더했습니다. 아래 CLI 설치 파일은 상류 프로젝트 [`CCCCY-ci/ctxhop`](https://github.com/CCCCY-ci/ctxhop)에서 받습니다.
+
 ## 주요 기능
 
 - **기기 간 세션 이어 가기**: 승인된 다른 기기에서 프로젝트 세션을 이어서 작업합니다.
@@ -28,26 +30,6 @@ Session Hub는 각 에이전트의 네이티브 세션을 논리 세션으로 �
 - **에이전트 전환**: `ctxhop session switch`로 고른 컨텍스트를 다른 에이전트의 새 네이티브 세션으로 옮깁니다.
 - **작업 공간 인계**: 필요하면 고른 작업 공간 파일과 Git 상태를 세션과 함께 옮깁니다.
 - **로컬 우선 스토리지**: 데이터를 기기에서 암호화한 뒤 직접 관리하는 백엔드에 저장합니다.
-
-## 전체 구조
-
-CtxHop은 단순한 계층 구조를 씁니다.
-
-~~~text
-Domain
-└── Hub
-    └── Project
-        └── Session
-            ├── Claude Code native Session / Replica
-            └── Codex native Session / Replica
-~~~
-
-- **도메인**은 암호화된 동기화 경계입니다. 원격 네임스페이스, 키 파일, 승인된 기기가 하나의 공유 데이터 공간을 이룹니다.
-- **허브**는 도메인 안의 논리적 프로젝트 공간입니다. 프로젝트를 묶고 서로 분리하며, 새 도메인은 `default` 허브로 시작합니다.
-- **프로젝트**는 작업 공간, Git 상태, 세션을 담는 프로젝트 단위의 경계입니다.
-- **세션**은 여러 에이전트가 함께 쓰는 논리적 개발 컨텍스트입니다.
-
-평소에는 도메인과 `default` 허브가 겉으로 드러나지 않습니다. 사용자는 현재 프로젝트와 그 세션으로 작업합니다. 같은 승인 도메인 안에서 프로젝트 묶음을 따로 나누고 싶을 때만 다른 허브를 씁니다.
 
 ## 데모
 
@@ -222,6 +204,50 @@ ctxhop session switch <SESSION_ID> --to codex --launch
 
 Claude Code로 전환하려면 `--to claude-code`를 사용합니다.
 
+## Windows GUI (이 포크)
+
+[`gui/ctxhop-gui-vnext/`](gui/ctxhop-gui-vnext/)는 Claude Code와 Codex Desktop 대화를 한 창에서 백업하고 다른 PC에서 복원하는 Windows GUI입니다. Windows PowerShell 5.1로 실행합니다.
+
+1. 이 포크의 [Releases](https://github.com/jaeseongs95/ctxhop/releases)에서 `CtxHop-GUI-vNext-<날짜>.zip`을 받습니다.
+2. **압축을 풀기 전에 차단을 해제합니다.** zip을 오른쪽 클릭 → **속성** → **차단 해제**를 체크하거나 `Unblock-File .\CtxHop-GUI-vNext-<날짜>.zip`을 실행합니다. 이 단계를 건너뛰면 Windows가 풀린 스크립트를 막아 GUI가 아무 표시 없이 뜨지 않습니다.
+3. 압축을 풀고 `ctxhop-gui-vnext\Run-CtxHop-GUI-vNext.cmd`를 실행합니다.
+
+- 백업은 한 번에 대화 하나씩 합니다. Codex Desktop 복원은 고른 백업을 먼저 미리 보여 주고, 항목마다 처리 방법을 직접 고르게 합니다(모든 항목의 기본값은 건너뛰기).
+- 화면은 한국어나 영어로 볼 수 있습니다. 설정 탭의 **Language / 언어**에서 고릅니다.
+- Codex Desktop 대화 전송에는 `ctxhop bundle` 명령을 씁니다. 릴리스 zip에 든 `bin\ctxhop.exe`와 `bin\ctxhop-claude.exe`는 GUI가 SHA-256으로 고정해 확인하며, 저장소에는 커밋하지 않았습니다.
+- 미리보기 판입니다. 두 PC 사이의 실제 왕복은 아직 해 보지 않았습니다.
+
+설정·사용·복구 절차는 [GUI README](gui/ctxhop-gui-vnext/README.md)를 참고하세요.
+
+## 문제 해결
+
+- **명령이 실패했는데 이유를 모를 때**: `ctxhop doctor`로 설정·백엔드·에이전트·프로젝트·Hook 상태를 확인합니다. CtxHop은 [설정 디렉터리](#설정)의 `logs/ctxhop-YYYY-MM-DD.log`에 날마다 로그를 남기며, 실패한 명령은 `result=failed`와 오류 내용으로 기록됩니다.
+- **`ctxhop list`나 `ctxhop project bind`가 conflicting project bindings 오류를 낼 때**: 상위 폴더와 그 하위 폴더가 서로 다른 identity로 연결된 상태입니다. `ctxhop project list`로 찾은 뒤 `ctxhop project unbind --identity <ID> --path <DIR>`로 한쪽을 해제합니다. 해제는 로컬 설정만 바꾸며, 세션과 원격 데이터는 그대로 남습니다.
+- **`ctxhop init`이 비밀번호 불일치나 복구 키 확인 오류로 멈췄을 때**: 아무것도 저장되지 않았습니다. `ctxhop init`을 다시 실행합니다.
+- **암호화 비밀번호를 잊었을 때**: `ctxhop passphrase reset`을 실행하고 복구 키를 입력합니다. 알고 있는 비밀번호를 바꾸려면 `ctxhop passphrase change`를 씁니다.
+- **릴리스 zip을 풀었는데 Windows GUI가 뜨지 않을 때**: 풀린 폴더를 지우고, zip을 차단 해제한 뒤 다시 풉니다.
+- GUI의 다른 문제는 [GUI README의 문제 해결](gui/ctxhop-gui-vnext/README.md#문제-해결)을 참고하세요.
+
+## 전체 구조
+
+CtxHop은 단순한 계층 구조를 씁니다.
+
+~~~text
+Domain
+└── Hub
+    └── Project
+        └── Session
+            ├── Claude Code native Session / Replica
+            └── Codex native Session / Replica
+~~~
+
+- **도메인**은 암호화된 동기화 경계입니다. 원격 네임스페이스, 키 파일, 승인된 기기가 하나의 공유 데이터 공간을 이룹니다.
+- **허브**는 도메인 안의 논리적 프로젝트 공간입니다. 프로젝트를 묶고 서로 분리하며, 새 도메인은 `default` 허브로 시작합니다.
+- **프로젝트**는 작업 공간, Git 상태, 세션을 담는 프로젝트 단위의 경계입니다.
+- **세션**은 여러 에이전트가 함께 쓰는 논리적 개발 컨텍스트입니다.
+
+평소에는 도메인과 `default` 허브가 겉으로 드러나지 않습니다. 사용자는 현재 프로젝트와 그 세션으로 작업합니다. 같은 승인 도메인 안에서 프로젝트 묶음을 따로 나누고 싶을 때만 다른 허브를 씁니다.
+
 ## 동기화하는 데이터
 
 CtxHop은 기본적으로 암호화된 세션 컨텍스트와 프로젝트 식별 정보를 동기화합니다. 작업 공간 파일과 Git 상태는 `--workspace`를 쓸 때만 포함합니다. 에이전트 설정은 동기화하기 전에 걸러 냅니다.
@@ -371,18 +397,6 @@ $env:CTXHOP_CONFIG_DIR = Join-Path $env:USERPROFILE '.ctxhop-custom'
 ~~~
 
 이 디렉터리에는 로컬 설정과 기기 키가 들어 있습니다. 저장소에 커밋하거나 공개적으로 공유하지 마세요.
-
-## Windows GUI (이 포크)
-
-이 포크는 [`gui/ctxhop-gui-vnext/`](gui/ctxhop-gui-vnext/)에 Windows GUI를 추가했습니다. Windows PowerShell 5.1과 WinForms로 만든 화면이며, `Run-CtxHop-GUI-vNext.cmd`로 실행합니다.
-
-- Claude Code와 Codex Desktop 대화를 한 창에서 백업하고 복원합니다. 백업은 한 번에 대화 하나씩 합니다. Codex Desktop 복원은 고른 백업을 먼저 미리 보여 주고, 항목마다 처리 방법을 직접 고르게 합니다(모든 항목의 기본값은 건너뛰기).
-- 화면은 한국어나 영어로 볼 수 있습니다. 설정 탭의 **Language / 언어**에서 고른 뒤 프로그램을 다시 시작하면 적용됩니다.
-- Codex Desktop 대화 전송에는 새로 추가한 `ctxhop bundle` 명령을 씁니다.
-- GUI를 쓰려면 빌드한 `bin\ctxhop.exe`와 `bin\ctxhop-claude.exe`가 있어야 합니다. GUI는 두 파일을 SHA-256으로 고정해 확인하며, 두 파일은 저장소에 커밋되어 있지 않습니다.
-- 아직 검토 후보입니다. 두 PC 사이의 실제 왕복은 아직 실행하지 않았습니다.
-
-사용 순서와 복구 절차는 [GUI README](gui/ctxhop-gui-vnext/README.md)를 참고하세요.
 
 ## 개발
 

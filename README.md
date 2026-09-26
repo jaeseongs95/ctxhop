@@ -26,6 +26,11 @@ source history, and lets you switch Agents by creating a target-native Session
 from selected context. Workspace and Git handoff are explicit, while local
 encryption and device authorization protect the sync boundary.
 
+> **This fork** (`jaeseongs95/ctxhop`) adds a [Windows
+> GUI](#windows-gui-this-fork) for Claude Code and Codex Desktop conversations.
+> The CLI installers below come from the upstream project
+> [`CCCCY-ci/ctxhop`](https://github.com/CCCCY-ci/ctxhop).
+
 ## Key Features
 
 - **Cross-device Session resume**: Continue a project Session on another
@@ -38,30 +43,6 @@ encryption and device authorization protect the sync boundary.
   Session when needed.
 - **Local-first storage**: Encrypt data on the device and store it in a backend
   you control.
-
-## How It Fits Together
-
-CtxHop uses a simple hierarchy:
-
-~~~text
-Domain
-└── Hub
-    └── Project
-        └── Session
-            ├── Claude Code native Session / Replica
-            └── Codex native Session / Replica
-~~~
-
-- **Domain** is the encrypted sync boundary: its Remote namespace, keyfile,
-  and authorized devices define one shared data space.
-- **Hub** is a logical project space inside a Domain. It groups and isolates
-  projects; a new Domain starts with a `default` Hub.
-- **Project** is the project-level boundary for workspace, Git state, and Sessions.
-- **Session** is the logical development context shared across Agents.
-
-In normal use, Domain and the `default` Hub stay in the background. You work
-with the current Project and its Sessions. Use another Hub only when you want
-to keep groups of projects separate within the same authorized Domain.
 
 ## Demo
 
@@ -255,6 +236,79 @@ ctxhop session switch <SESSION_ID> --to codex --launch
 
 Use `--to claude-code` to switch to Claude Code.
 
+## Windows GUI (this fork)
+
+[`gui/ctxhop-gui-vnext/`](gui/ctxhop-gui-vnext/) is a Windows GUI that backs up
+Claude Code and Codex Desktop conversations from one window and restores them
+on another PC. It runs on Windows PowerShell 5.1.
+
+1. Download `CtxHop-GUI-vNext-<date>.zip` from this fork's
+   [Releases](https://github.com/jaeseongs95/ctxhop/releases).
+2. **Unblock the zip before extracting it**: right-click it, choose
+   **Properties**, and check **Unblock**, or run
+   `Unblock-File .\CtxHop-GUI-vNext-<date>.zip`. Otherwise Windows blocks the
+   extracted scripts and the GUI silently does not open.
+3. Extract it and run `ctxhop-gui-vnext\Run-CtxHop-GUI-vNext.cmd`.
+
+- A backup covers one conversation at a time. A Codex Desktop restore previews
+  the selected backups first and asks you to choose an action for each item
+  (every item defaults to Skip).
+- The UI is in Korean or English. Choose one under **Language / 언어** on the
+  settings tab.
+- Codex Desktop transfers use the `ctxhop bundle` command. The release zip
+  includes the `bin\ctxhop.exe` and `bin\ctxhop-claude.exe` builds, which the
+  GUI pins by SHA-256. Neither is committed to this repository.
+- This is a preview. A real round trip between two PCs has not been run yet.
+
+Setup, usage, and recovery steps are in the [GUI
+README](gui/ctxhop-gui-vnext/README.en.md).
+
+## Troubleshooting
+
+- **A command fails and the reason is unclear**: run `ctxhop doctor` to check
+  the configuration, backend, Agent, project, and Hook state. CtxHop also
+  writes a daily log, `logs/ctxhop-YYYY-MM-DD.log`, in the [configuration
+  directory](#configuration). A failed command is logged with `result=failed`
+  and its error.
+- **`ctxhop list` or `ctxhop project bind` reports conflicting project
+  bindings**: a parent folder and one of its child folders are bound with
+  different identities. Find them with `ctxhop project list`, then remove one
+  with `ctxhop project unbind --identity <ID> --path <DIR>`. Unbinding changes
+  only the local configuration. Sessions and remote data are kept.
+- **`ctxhop init` stopped because the passwords did not match or the Recovery
+  Key confirmation was wrong**: nothing was saved. Run `ctxhop init` again.
+- **You forgot the encryption password**: run `ctxhop passphrase reset` and
+  enter the Recovery Key. To change a password you know, run
+  `ctxhop passphrase change`.
+- **The Windows GUI does not open after you extract the release zip**: delete
+  the extracted folder, unblock the zip, and extract it again.
+- For other GUI problems, see [Troubleshooting in the GUI
+  README](gui/ctxhop-gui-vnext/README.en.md#troubleshooting).
+
+## How It Fits Together
+
+CtxHop uses a simple hierarchy:
+
+~~~text
+Domain
+└── Hub
+    └── Project
+        └── Session
+            ├── Claude Code native Session / Replica
+            └── Codex native Session / Replica
+~~~
+
+- **Domain** is the encrypted sync boundary: its Remote namespace, keyfile,
+  and authorized devices define one shared data space.
+- **Hub** is a logical project space inside a Domain. It groups and isolates
+  projects; a new Domain starts with a `default` Hub.
+- **Project** is the project-level boundary for workspace, Git state, and Sessions.
+- **Session** is the logical development context shared across Agents.
+
+In normal use, Domain and the `default` Hub stay in the background. You work
+with the current Project and its Sessions. Use another Hub only when you want
+to keep groups of projects separate within the same authorized Domain.
+
 ## Synchronized Data
 
 CtxHop synchronizes encrypted Session context and project identity by default.
@@ -419,27 +473,6 @@ $env:CTXHOP_CONFIG_DIR = Join-Path $env:USERPROFILE '.ctxhop-custom'
 
 This directory contains local configuration and device keys. Do not commit it
 to a repository or share it publicly.
-
-## Windows GUI (this fork)
-
-This fork adds a Windows GUI in [`gui/ctxhop-gui-vnext/`](gui/ctxhop-gui-vnext/).
-It is a Windows PowerShell 5.1 WinForms front end; start it with
-`Run-CtxHop-GUI-vNext.cmd`.
-
-- Back up and restore Claude Code and Codex Desktop conversations from one
-  window. A backup covers one conversation at a time. A Codex Desktop restore
-  previews the selected backups first and asks you to choose an action for
-  each item (every item defaults to Skip).
-- The UI is in Korean or English. Pick one under **Language / 언어** on the
-  settings tab, then restart the GUI.
-- Codex Desktop transfers use the new `ctxhop bundle` command.
-- The GUI needs the built `bin\ctxhop.exe` and `bin\ctxhop-claude.exe`. It
-  pins both by SHA-256, and neither is committed to this repository.
-- This is a review candidate. A live round trip between two PCs has not been
-  run yet.
-
-See the [GUI README](gui/ctxhop-gui-vnext/README.en.md) for usage steps and
-recovery procedures.
 
 ## Development
 
