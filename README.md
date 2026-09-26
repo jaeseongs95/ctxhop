@@ -254,7 +254,7 @@ on another PC. It runs on Windows PowerShell 5.1.
   the selected backups first and asks you to choose an action for each item
   (every item defaults to Skip).
 - The UI is in Korean or English. Choose one under **Language / 언어** on the
-  settings tab.
+  settings tab, then restart the GUI.
 - Codex Desktop transfers use the `ctxhop bundle` command. The release zip
   includes the `bin\ctxhop.exe` and `bin\ctxhop-claude.exe` builds, which the
   GUI pins by SHA-256. Neither is committed to this repository.
@@ -274,7 +274,9 @@ README](gui/ctxhop-gui-vnext/README.en.md).
   bindings**: a parent folder and one of its child folders are bound with
   different identities. Find them with `ctxhop project list`, then remove one
   with `ctxhop project unbind --identity <ID> --path <DIR>`. Unbinding changes
-  only the local configuration. Sessions and remote data are kept.
+  only the local configuration. Sessions and remote data are kept. If you
+  remove the last binding of an identity that used a non-default Hub, choose
+  the Hub again (`--hub`) when you bind it again.
 - **`ctxhop init` stopped because the passwords did not match or the Recovery
   Key confirmation was wrong**: nothing was saved. Run `ctxhop init` again.
 - **You forgot the encryption password**: run `ctxhop passphrase reset` and

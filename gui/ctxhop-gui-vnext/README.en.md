@@ -28,7 +28,7 @@ Use the **Connection · Invite** tab.
 
 1. **Language / 언어**: choose 한국어 (Korean) or English, then restart the GUI. Screens and job messages switch language. Block reasons from the Python backend and output from the ctxhop, Codex, and Claude executables stay in their original language.
 2. If this PC already uses ctxhop, click **Check connection** and skip the rest. The GUI keeps the existing settings, and **Set up / Join by invite** refuses to run over them.
-3. **First PC**: make an empty folder in the shared folder, then set it as **Drive store path**. Enter **This PC name** and click **Set up / Join by invite**. A task window opens where you type the password yourself.
+3. **First PC**: make an empty folder in the shared folder, then set it as **Drive store path**. Leave **Invite (other PC)** empty, enter **This PC name**, and click **Set up / Join by invite**. A task window opens where you type the password yourself.
    - The settings sync question (`[Y/n]`) treats Enter as Y. **Type `n`**. With Y, this GUI cannot back up.
    - If the two passwords differ or you mistype the recovery key confirmation, nothing is saved. Click the same button again.
    - Keep the recovery key from this step somewhere safe and offline.
@@ -41,7 +41,7 @@ On the **Backup · Restore** tab, choose **Claude Code** as the agent.
 
 1. Choose the project folder, type a shared **Identity**, and click **Register project**. Use the same Identity for the same project on every PC. Registered folders appear under **Registered projects**.
    - Do not register a parent folder and one of its child folders with **different Identities**. ctxhop then refuses to list or register anything inside them, so the GUI blocks such a registration.
-   - If two registrations already overlap, pick one under **Registered projects** and click **Unregister**. Conversation files and backups are not deleted. If the folder was already deleted, it is unregistered only when no other registration uses that Identity.
+   - If two registrations already overlap, pick one under **Registered projects** and click **Unregister**. Conversation files and backups are not deleted. If the folder was already deleted, it is unregistered only when that Identity has exactly one registration and it is this path.
 2. Click **Load conversations** and select one conversation.
 3. Click **Back up selected**, or **Preview and restore** to bring a shared backup to this PC. The GUI checks the source ID, the project, and the executable hash, blocks environment changes, and keeps a recovery record while it restores.
 4. **Open selected** opens the conversation in Claude Code.
@@ -114,8 +114,8 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\backend\Invoke-D
 
 - `-HomePath` must be **the same string** as the Codex data folder on the settings tab. Do not end it with `\`, because `powershell.exe -File` reads a trailing `\'` as a quote. The command then stops before writing and says the folder does not exist. These commands use the same Python and the same pinned backend hash as the GUI.
 - `recover` returns the conversation to its state before the import. It stops on its own if the app rewrote that conversation after the interruption, or if the DB was only partly created.
-- `recover` checks only that the app is closed and the DB structure, not the engine version. After a Codex update it still works if the DB structure is the same. Otherwise it stops before writing. In that case use the next step.
-- **If recovery stopped, or the import finished but its completion record remains**: do not repeat recovery. Check the conversation with that UUID in the Codex app. To keep the current state, **move** the folder listed by `pending` out of `.ctxhop-desktop-recovery` (do not delete it). Inside, `before.zip` is the original before the import and `incoming.zip` is the imported content. Moving the folder lifts the block.
+- `recover` checks only that the app is closed and the DB structure, not the engine version. After a Codex update it still works if the DB structure is the same. Otherwise it stops before writing. In that case use the next step (bringing back `before.zip` needs the same engine version, so it is not possible then).
+- **If recovery stopped, or the import finished but only its completion record remains**: do not repeat recovery. Check the conversation with that UUID in the Codex app. To keep the current state, **move** the folder listed by `pending` out of `.ctxhop-desktop-recovery` (do not delete it). Inside, `before.zip` is the original before the import and `incoming.zip` is the imported content. Moving the folder lifts the block.
 
 ### Undo a restore that replaced a local history
 

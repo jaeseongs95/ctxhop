@@ -213,7 +213,7 @@ Claude Code로 전환하려면 `--to claude-code`를 사용합니다.
 3. 압축을 풀고 `ctxhop-gui-vnext\Run-CtxHop-GUI-vNext.cmd`를 실행합니다.
 
 - 백업은 한 번에 대화 하나씩 합니다. Codex Desktop 복원은 고른 백업을 먼저 미리 보여 주고, 항목마다 처리 방법을 직접 고르게 합니다(모든 항목의 기본값은 건너뛰기).
-- 화면은 한국어나 영어로 볼 수 있습니다. 설정 탭의 **Language / 언어**에서 고릅니다.
+- 화면은 한국어나 영어로 볼 수 있습니다. 설정 탭의 **Language / 언어**에서 고른 뒤 프로그램을 다시 시작하면 적용됩니다.
 - Codex Desktop 대화 전송에는 `ctxhop bundle` 명령을 씁니다. 릴리스 zip에 든 `bin\ctxhop.exe`와 `bin\ctxhop-claude.exe`는 GUI가 SHA-256으로 고정해 확인하며, 저장소에는 커밋하지 않았습니다.
 - 미리보기 판입니다. 두 PC 사이의 실제 왕복은 아직 해 보지 않았습니다.
 
@@ -222,7 +222,7 @@ Claude Code로 전환하려면 `--to claude-code`를 사용합니다.
 ## 문제 해결
 
 - **명령이 실패했는데 이유를 모를 때**: `ctxhop doctor`로 설정·백엔드·에이전트·프로젝트·Hook 상태를 확인합니다. CtxHop은 [설정 디렉터리](#설정)의 `logs/ctxhop-YYYY-MM-DD.log`에 날마다 로그를 남기며, 실패한 명령은 `result=failed`와 오류 내용으로 기록됩니다.
-- **`ctxhop list`나 `ctxhop project bind`가 conflicting project bindings 오류를 낼 때**: 상위 폴더와 그 하위 폴더가 서로 다른 identity로 연결된 상태입니다. `ctxhop project list`로 찾은 뒤 `ctxhop project unbind --identity <ID> --path <DIR>`로 한쪽을 해제합니다. 해제는 로컬 설정만 바꾸며, 세션과 원격 데이터는 그대로 남습니다.
+- **`ctxhop list`나 `ctxhop project bind`가 conflicting project bindings 오류를 낼 때**: 상위 폴더와 그 하위 폴더가 서로 다른 identity로 연결된 상태입니다. `ctxhop project list`로 찾은 뒤 `ctxhop project unbind --identity <ID> --path <DIR>`로 한쪽을 해제합니다. 해제는 로컬 설정만 바꾸며, 세션과 원격 데이터는 그대로 남습니다. 기본이 아닌 Hub를 쓰던 identity의 마지막 연결을 해제했다면, 다시 연결할 때 Hub를 다시 지정합니다(`--hub`).
 - **`ctxhop init`이 비밀번호 불일치나 복구 키 확인 오류로 멈췄을 때**: 아무것도 저장되지 않았습니다. `ctxhop init`을 다시 실행합니다.
 - **암호화 비밀번호를 잊었을 때**: `ctxhop passphrase reset`을 실행하고 복구 키를 입력합니다. 알고 있는 비밀번호를 바꾸려면 `ctxhop passphrase change`를 씁니다.
 - **릴리스 zip을 풀었는데 Windows GUI가 뜨지 않을 때**: 풀린 폴더를 지우고, zip을 차단 해제한 뒤 다시 풉니다.

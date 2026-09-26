@@ -224,11 +224,11 @@ ctxhop session switch <SESSION_ID> --to codex --launch
 [`gui/ctxhop-gui-vnext/`](gui/ctxhop-gui-vnext/) 是一个 Windows GUI，可在一个窗口中备份 Claude Code 和 Codex Desktop 对话，并在另一台 PC 上恢复。它使用 Windows PowerShell 5.1 运行。
 
 1. 从此 fork 的 [Releases](https://github.com/jaeseongs95/ctxhop/releases) 下载 `CtxHop-GUI-vNext-<日期>.zip`。
-2. **解压前先解除锁定**：右键点击 zip，选择 **属性**，勾选 **解除锁定**；或运行 `Unblock-File .\CtxHop-GUI-vNext-<日期>.zip`。否则 Windows 会阻止解压出的脚本，GUI 会在没有任何提示的情况下无法打开。
+2. **解压前先解除锁定**：右键点击 zip，选择 **属性**，勾选 **解除锁定**；或运行 `Unblock-File .\CtxHop-GUI-vNext-<日期>.zip`。否则 Windows 会阻止解压出的脚本，GUI 会直接打不开，也没有任何提示。
 3. 解压后运行 `ctxhop-gui-vnext\Run-CtxHop-GUI-vNext.cmd`。
 
 - 每次备份一个对话。Codex Desktop 恢复会先预览所选备份，再让你为每一项选择处理方式（默认全部为跳过）。
-- 界面支持韩语和英语，在设置页的 **Language / 언어** 中选择。
+- 界面支持韩语和英语，在设置页的 **Language / 언어** 中选择后重新启动 GUI 即可生效。
 - Codex Desktop 对话传输使用 `ctxhop bundle` 命令。发布 zip 中的 `bin\ctxhop.exe` 和 `bin\ctxhop-claude.exe` 由 GUI 按 SHA-256 固定校验，两者都没有提交到本仓库。
 - 这是预览版，尚未在两台 PC 之间实际往返验证。
 
@@ -237,7 +237,7 @@ ctxhop session switch <SESSION_ID> --to codex --launch
 ## 故障排查
 
 - **命令失败但原因不明**：运行 `ctxhop doctor` 检查配置、后端、Agent、项目和 Hook 状态。CtxHop 还会在[配置目录](#配置)中按天写入 `logs/ctxhop-YYYY-MM-DD.log`，失败的命令会以 `result=failed` 和错误信息记录。
-- **`ctxhop list` 或 `ctxhop project bind` 报告 conflicting project bindings**：父目录和它的某个子目录绑定到了不同的 identity。用 `ctxhop project list` 找到它们，再用 `ctxhop project unbind --identity <ID> --path <DIR>` 解除其中一个。解除绑定只修改本地配置，Session 和远端数据保持不变。
+- **`ctxhop list` 或 `ctxhop project bind` 报告 conflicting project bindings**：父目录和它的某个子目录绑定到了不同的 identity。用 `ctxhop project list` 找到它们，再用 `ctxhop project unbind --identity <ID> --path <DIR>` 解除其中一个。解除绑定只修改本地配置，Session 和远端数据保持不变。如果解除的是某个使用非默认 Hub 的 identity 的最后一个绑定，重新绑定时需要再次指定 Hub（`--hub`）。
 - **`ctxhop init` 因两次密码不一致或 Recovery Key 确认错误而中止**：不会保存任何内容，重新运行 `ctxhop init` 即可。
 - **忘记加密密码**：运行 `ctxhop passphrase reset` 并输入 Recovery Key。要修改已知的密码，请运行 `ctxhop passphrase change`。
 - **解压发布 zip 后 Windows GUI 打不开**：删除解压出的文件夹，解除 zip 的锁定后重新解压。
