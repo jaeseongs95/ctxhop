@@ -39,6 +39,21 @@
 | Worker 결과 파일 | GUI가 띄운 `Worker.ps1`이 `ClaudeWorker.ps1 -LibraryOnly`를 dot-source하면 ClaudeWorker의 `param` 블록이 같은 스코프의 `$RequestFile`·`$ResultFile`을 빈 값으로 다시 묶음. 요청을 읽지 못하고 결과 파일도 쓰지 못해 GUI의 모든 작업이 "작업 창이 중단되었습니다"로 끝남. 기존 시험은 Worker를 라이브러리로만 불러 이 경로를 실행하지 않았음(언어 선택 작업 중 발견) | dot-source 전에 두 경로를 보관했다가 되돌림 | `Test-DesktopWorker`가 GUI처럼 Worker를 별도 프로세스로 실행해 결과 파일을 확인. 수정 전 Worker에서는 실패 |
 | macOS CI | `internal/desktopbundle`의 경로 검사가 상위 폴더의 모든 링크를 거부하는데(의도한 보안 동작), macOS 임시 폴더 `/var`가 `/private/var` 링크라 bundle 시험 11개가 실패 | 제품 검사는 그대로 두고, 시험이 링크를 푼 임시 폴더(`filepath.EvalSymlinks`)를 쓰도록 수정 | GitHub CI |
 
+## 언어 선택 (한국어·English)
+
+- 설정 탭에 **Language / 언어** 선택(한국어, English)을 추가했습니다. 선택은 `vnext-preferences.json`의 `language`에 저장되고 다시 시작하면 적용됩니다. 작업 요청에도 `language`가 실려 작업 창(`Worker.ps1`)의 메시지가 같은 언어로 나옵니다.
+- GUI·Codex Worker·Claude Worker의 화면·오류 문장 229개를 `Strings.ps1`(`키=@('한국어','English')`)로 옮겼습니다. 한국어 문장은 원래 문자열과 같아서 기존 시험이 그대로 통과합니다.
+- 번역하지 않은 것: Python 백엔드의 차단 사유, ctxhop·Codex·Claude 실행 파일 출력, 글꼴 이름과 기본 Drive 경로.
+- `ClaudeWorker.ps1`은 안정판(`D08E9A15…`)과 더 이상 바이트가 같지 않습니다. 문장만 `T '키'` 호출로 바꿨고 논리는 그대로이며, `Test-DesktopWorker`는 이 판의 해시를 고정합니다.
+- `Test-Strings.ps1`(신규)이 확인하는 것:
+  - 두 언어 문장의 짝과 자리표시자
+  - 세 스크립트에 남은 번역 안 된 한글(주석 제외)
+  - 쓰이지 않거나 없는 키
+  - 영어 화면(글자 넘침은 스크린샷으로 따로 확인)
+  - 영어 선택 값으로 복원 결정
+  - 별도 프로세스로 띄운 작업 창이 요청 언어로 답하는지
+- 목록을 그릴 때 행마다 문장을 찾지 않도록 반복문 밖에서 한 번만 찾습니다(5,000개 첫 표시: 이번 187ms, 이전 기록 201ms, 각 1회 측정).
+
 ## 실행한 검사 (Windows PowerShell 5.1, Python 3.12.14 Codex 번들, 엔진 `0.158.0-alpha.2.1`)
 
 | 검사 | 결과 | 원시 로그 |
@@ -51,6 +66,8 @@
 | `Test-ClaudeGUI.ps1` | 93 assertions, 5,000개 합성 목록 첫 표시 201ms | `..\검증자료\ps51-r6\Test-ClaudeGUI.txt` |
 
 PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -File`로 실행했고 5개 모두 종료 코드 0이었습니다(각 로그 끝에 `EXIT CODE` 기록, README의 `RemoteSigned`로는 다시 실행하지 않음).
+
+언어 선택 뒤 같은 명령으로 6개를 다시 실행했고 모두 종료 코드 0이었습니다: `Test-Strings` 1219, `Test-DesktopWorker` 61, `Test-DesktopGUI` 25, `Test-ClaudeGUI` 93(5,000개 첫 표시 187ms), `Test-ClaudeWorker` 640 assertions, `Test-DesktopIntegration` 32. 이 실행의 원시 로그는 작업 PC의 임시 폴더에만 있습니다.
 
 - 전송(`bin\ctxhop.exe`)은 PowerShell 테스트에서 mock이고, 성공 경로의 mock은 bundle 메타데이터 규칙(정확한 7개 필드, BOM 없음, NUL·줄바꿈 없음)을 확인합니다.
 - `backend\test_guard_shim.py`는 시험 전용이며 앱 종료 검사와 엔진 버전 조회만 바꿉니다(엔진은 환경변수 값). Worker·GUI는 이 파일을 호출하지 않습니다. `Test-DesktopIntegration.ps1`의 성공 경로를 다른 PC에서도 다시 돌릴 수 있도록 패키지에 남겨 두었습니다.
@@ -67,9 +84,10 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 | `backend\schema.json` (백엔드 고정) | `D24ACAC2105569B5B9CFDABC5259DB8217B9A9F175D7D2B57A09A2D4F76FA0A2` |
 | `bin\ctxhop.exe` (bundle 전송, Worker 고정, 변경 없음) | `9B14CCD3B33C75EDFD9D424D76FBAF17092364C58721C1BB9C0FD6BA73C7C006` |
 | `bin\ctxhop-claude.exe` (`0.2.0-gui.1`, 변경 없음) | `A1702CE1839AF90C0DDB87E7C07F1BE7899BE8EBDD9117FE680D2EC9739C233D` |
-| `ClaudeWorker.ps1` (안정판 Worker와 동일, 변경 없음) | `D08E9A15A19C8F3D09126EF8535CFD13AE39D9CFF3BC9BADA1DCE53C4741E47F` |
-| `Worker.ps1` (결과 파일 경로 보관 수정) | `549FC0AD3CB8D028442443E9CDC4AB1654DE7EF53BAEB29AF906E6B01E903FA7` |
-| `GUI.ps1` (완료 문구, 작업 불가 행의 백업 열·선택 안내, 설정 탭 안내 문구만 변경) | `A66668A61C73F59EDC2071966C8C14CE6D7A9F75275EA21A21E9D9752CFEC5CD` |
+| `ClaudeWorker.ps1` (안정판 `D08E9A15…`에서 문장만 `Strings.ps1`로 옮김) | `059448A8C945A586459085EAFB88F163AF90FD8A7CEC955B9F550C5DEB94D28A` |
+| `Worker.ps1` (결과 파일 경로 보관 수정, 언어 선택) | `C8AA63D2F8F853A77B5AD48F6E74468E777FA3EDF76C8DF5AC0539F81FE59EA8` |
+| `GUI.ps1` (언어 선택) | `9FE39D5E0935D98B4EAC1D39FFAFF5B9D5E990A77C8714AEC214829382F3D827` |
+| `Strings.ps1` (한국어·영어 문장 표) | `5B6B3733B5B66D5D63B9A8F7EBC55AD7EC4C7295A17C095C561101EC87C49451` |
 
 `transport-source\`와 `bin\ctxhop.exe`는 노트북 세션 결과를 그대로 옮겼습니다. 이 PC에는 Go가 없어 Go 시험을 다시 실행하지 않았고, 기록된 결과(`transport-source\verification-results\`: 전체 suite 통과, race는 gcc 부재로 미실행)를 근거로 둡니다.
 

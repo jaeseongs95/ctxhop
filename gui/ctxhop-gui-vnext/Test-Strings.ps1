@@ -66,6 +66,13 @@ try {
     }
     foreach ($column in $grid.Columns) { Assert ($column.HeaderText -notmatch $hangul) "English grid header: $($column.HeaderText)" }
     Assert ((Base-Job 'List').language -eq 'en' -and $script:Prefs.language -eq 'en') 'jobs and preferences carry the selected language'
+    # GUI처럼 작업 창을 별도 프로세스로 띄우면 요청의 언어로 결과를 쓴다.
+    $request=Join-Path $testDirectory 'request.json'; $result=Join-Path $testDirectory 'result.json'
+    @{action='Open';agent='codex-desktop';home=$testDirectory;language='en'} | ConvertTo-Json | Set-Content -LiteralPath $request -Encoding UTF8
+    $null=& (Join-Path $PSHOME 'powershell.exe') -NoLogo -NoProfile -ExecutionPolicy RemoteSigned -File (Join-Path $PSScriptRoot 'Worker.ps1') -RequestFile $request -ResultFile $result
+    $exitCode=$LASTEXITCODE
+    $answer=Get-Content -LiteralPath $result -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert ($exitCode -eq 1 -and $answer.error -and $answer.error -notmatch $hangul) 'worker process answers in the language sent by the GUI'
     $review=[pscustomobject]@{job=@{action='Preview';agent='codex-desktop';nativeId='11111111-1111-4111-8111-111111111111';remoteId='peer-a/'+('a'*32);title='fixture';sourceCwd='D:\source';projectPath='D:\target';home='D:\home'};receipt='fixture-inspect.json';preview=[pscustomobject]@{status='conflict';reason='fixture';token='pinned';source=@{};target=@{}}}
     $ui=New-DesktopReviewDialog @($review)
     try {
