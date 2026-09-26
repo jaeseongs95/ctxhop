@@ -1,0 +1,73 @@
+{
+  "frozenDate": "2026-09-26",
+  "binaryVersion": "0.2.0-gui.1",
+  "upstreamTag": "v0.2.0",
+  "upstreamCommit": "b8a18e917a3e93b2e961e8e12c82a4953a98779d",
+  "files": [
+    {
+      "path": "D:\\세션연동\\ctxhop-gui\\bin\\ctxhop.exe",
+      "sha256": "a1702ce1839af90c0ddb87e7c07f1be7899be8ebdd9117fe680d2ec9739c233d",
+      "size": 11735040
+    },
+    {
+      "path": "D:\\세션연동\\ctxhop-gui\\ctxhop-no-environment.patch",
+      "sha256": "beac931ff1451c8ead4636a5a1c360e2ac7daea69eb2d1e6ad3de1b14f5d07da",
+      "size": 24751
+    },
+    {
+      "path": "D:\\세션연동\\ctxhop-gui\\patched-source\\cmd\\ctxhop\\resume.go",
+      "sha256": "b923967a9634be8f8a5d19033661bbcd5e1eb1066ba33110635e285b10e437f9",
+      "size": 33140
+    },
+    {
+      "path": "D:\\세션연동\\ctxhop-gui\\patched-source\\cmd\\ctxhop\\discovery.go",
+      "sha256": "5fc55087f7bccd70ee1f203f4f6a4e8de6e14d076ade2881cd8910fd6336bf71",
+      "size": 6805
+    },
+    {
+      "path": "D:\\세션연동\\ctxhop-gui\\patched-source\\cmd\\ctxhop\\resume_test.go",
+      "sha256": "c107d956a22a73b7044e1072f0e4f982db2cda4cce97f392ae366dcbc9c4d92d",
+      "size": 19495
+    },
+    {
+      "path": "D:\\세션연동\\ctxhop-gui\\patched-source\\cmd\\ctxhop\\resume_no_environment_test.go",
+      "sha256": "0db2148bdd2cf05f4d6c26064cea63faf5092d44b102127546ca8330438e1580",
+      "size": 10097
+    },
+    {
+      "path": "D:\\세션연동\\ctxhop-gui\\patched-source\\Run-Regression.ps1",
+      "sha256": "6c43de45e4b54188f28d6bb80dcc59bd8e19441dead87f3c0e8fede757dcea9a",
+      "size": 2112
+    },
+    {
+      "path": "D:\\세션연동\\ctxhop-gui\\patched-source\\PATCH-NOTES.md",
+      "sha256": "bebfe560da7d6d894a31a0bdb85f2f04a9ed9069ee08d16e9325ba22a5b5b794",
+      "size": 5319
+    },
+    {
+      "path": "D:\\세션연동\\ctxhop-gui\\patched-source\\binary-manifest.json",
+      "sha256": "5dc79362848580f2473a3610eb211e16b9b7d0ff56e1d63e1f2cdea37f769241",
+      "size": 421
+    },
+    {
+      "path": "D:\\세션연동\\ctxhop-gui\\patched-source\\verification-results\\targeted-regression.txt",
+      "sha256": "53b9e4738467d2498726f7e8ef82bfa46be29958edff08406049f0cd3ab9e8e7",
+      "size": 709
+    },
+    {
+      "path": "D:\\세션연동\\ctxhop-gui\\patched-source\\verification-results\\relevant-suites.txt",
+      "sha256": "d03055fc167db2e6bda03d217fafab1be4c38e4413432026886125ff0f5b1331",
+      "size": 284
+    },
+    {
+      "path": "D:\\세션연동\\ctxhop-gui\\patched-source\\verification-results\\vet.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "D:\\세션연동\\ctxhop-gui\\patched-source\\verification-results\\results.json",
+      "sha256": "d09222dbc2626383a58848b558c9beba0eac508885a695afca14b848cc0ccebf",
+      "size": 218
+    }
+  ]
+}

@@ -31,6 +31,7 @@ type resumeOptions struct {
 	allowLimited       bool
 	allowDivergent     bool
 	noWorkspaceContext bool
+	noEnvironment      bool
 	replaceExisting    bool
 	version            int
 	session            string
@@ -39,31 +40,32 @@ type resumeOptions struct {
 }
 
 type resumeReport struct {
-	Preview         bool                      `json:"preview,omitempty"`
-	Session         string                    `json:"session"`
-	LogicalSession  string                    `json:"logicalSession,omitempty"`
-	Agent           string                    `json:"agent,omitempty"`
-	ReplicaID       string                    `json:"replicaId,omitempty"`
-	LocalState      string                    `json:"localState,omitempty"`
-	RemoteRecords   uint64                    `json:"remoteRecordCount,omitempty"`
-	LocalRecords    uint64                    `json:"localRecordCount,omitempty"`
-	AppendRecords   uint64                    `json:"appendRecordCount,omitempty"`
-	Title           string                    `json:"title"`
-	Workspace       string                    `json:"workspace"`
-	Differences     int                       `json:"differences"`
-	Replaced        bool                      `json:"replaced"`
-	Merged          bool                      `json:"merged"`
-	ContextInjected bool                      `json:"contextInjected"`
-	Sources         []string                  `json:"sources"`
-	OmittedAgents   []string                  `json:"omittedAgents,omitempty"`
-	OmittedReplicas []string                  `json:"omittedReplicas,omitempty"`
-	SelectedHeads   []string                  `json:"selectedHeads,omitempty"`
-	OmittedHeads    []string                  `json:"omittedHeads,omitempty"`
-	IncludedByAgent map[string]uint64         `json:"includedContributionsByAgent,omitempty"`
-	OmittedByAgent  map[string]uint64         `json:"omittedContributionsByAgent,omitempty"`
-	UnreadableHeads []string                  `json:"unreadableHeads,omitempty"`
-	Environment     *environmentPreviewReport `json:"environment,omitempty"`
-	WorkspaceState  *projectStateReport       `json:"workspaceState,omitempty"`
+	Preview            bool                      `json:"preview,omitempty"`
+	Session            string                    `json:"session"`
+	LogicalSession     string                    `json:"logicalSession,omitempty"`
+	Agent              string                    `json:"agent,omitempty"`
+	ReplicaID          string                    `json:"replicaId,omitempty"`
+	LocalState         string                    `json:"localState,omitempty"`
+	RemoteRecords      uint64                    `json:"remoteRecordCount,omitempty"`
+	LocalRecords       uint64                    `json:"localRecordCount,omitempty"`
+	AppendRecords      uint64                    `json:"appendRecordCount,omitempty"`
+	Title              string                    `json:"title"`
+	Workspace          string                    `json:"workspace"`
+	Differences        int                       `json:"differences"`
+	Replaced           bool                      `json:"replaced"`
+	Merged             bool                      `json:"merged"`
+	ContextInjected    bool                      `json:"contextInjected"`
+	Sources            []string                  `json:"sources"`
+	OmittedAgents      []string                  `json:"omittedAgents,omitempty"`
+	OmittedReplicas    []string                  `json:"omittedReplicas,omitempty"`
+	SelectedHeads      []string                  `json:"selectedHeads,omitempty"`
+	OmittedHeads       []string                  `json:"omittedHeads,omitempty"`
+	IncludedByAgent    map[string]uint64         `json:"includedContributionsByAgent,omitempty"`
+	OmittedByAgent     map[string]uint64         `json:"omittedContributionsByAgent,omitempty"`
+	UnreadableHeads    []string                  `json:"unreadableHeads,omitempty"`
+	Environment        *environmentPreviewReport `json:"environment,omitempty"`
+	EnvironmentSkipped bool                      `json:"environmentSkipped,omitempty"`
+	WorkspaceState     *projectStateReport       `json:"workspaceState,omitempty"`
 }
 
 type resumeCandidate struct {
@@ -143,6 +145,7 @@ func parseResumeOptions(args []string) (resumeOptions, error) {
 	flags.BoolVar(&options.allowLimited, "allow-limited", false, "allow restore when structural compatibility is limited")
 	flags.BoolVar(&options.allowDivergent, "allow-divergent", false, "allow restore despite a divergent workspace")
 	flags.BoolVar(&options.noWorkspaceContext, "no-workspace-context", false, "do not inject workspace differences into the restored session")
+	flags.BoolVar(&options.noEnvironment, "no-environment", false, "do not restore settings, MCP configuration, or skills")
 	flags.BoolVar(&options.replaceExisting, "replace-existing", false, "replace an existing local session")
 	flags.IntVar(&options.version, "version", -1, "select a zero-based remote fork version")
 	flags.StringVar(&options.agent, "agent", "", "select the source Agent for a Session Hub resume")
@@ -366,7 +369,7 @@ func collectResumeWithPromptMode(ctx context.Context, c *config.Config, configDi
 		}
 		environmentPreview := buildEnvironmentPreviewReport(ctx, localState, environmentSession)
 		environmentReport = &environmentPreview
-		if !options.preview && environmentReportHasConflict(environmentPreview) {
+		if !options.preview && !options.noEnvironment && environmentReportHasConflict(environmentPreview) {
 			return resumeReport{}, errors.New("resume: environment conflicts require manual resolution")
 		}
 
@@ -380,24 +383,25 @@ func collectResumeWithPromptMode(ctx context.Context, c *config.Config, configDi
 	}
 
 	baseReport := resumeReport{
-		Preview:         options.preview,
-		Session:         candidate.Summary.NativeID,
-		LogicalSession:  selection.LogicalSession,
-		Agent:           selection.AgentName,
-		ReplicaID:       selection.ReplicaID,
-		LocalState:      selection.LocalState.State,
-		RemoteRecords:   selection.LocalState.RemoteRecords,
-		LocalRecords:    selection.LocalState.LocalRecords,
-		AppendRecords:   selection.LocalState.AppendRecords,
-		Title:           safeListText(candidate.Summary.Title),
-		Environment:     environmentReport,
-		OmittedAgents:   append([]string(nil), selection.OmittedAgents...),
-		OmittedReplicas: append([]string(nil), selection.OmittedReplicas...),
-		SelectedHeads:   append([]string(nil), selection.SelectedHeads...),
-		OmittedHeads:    append([]string(nil), selection.OmittedHeads...),
-		IncludedByAgent: cloneResumeCounts(selection.IncludedByAgent),
-		OmittedByAgent:  cloneResumeCounts(selection.OmittedByAgent),
-		UnreadableHeads: append([]string(nil), selection.UnreadableHeads...),
+		Preview:            options.preview,
+		Session:            candidate.Summary.NativeID,
+		LogicalSession:     selection.LogicalSession,
+		Agent:              selection.AgentName,
+		ReplicaID:          selection.ReplicaID,
+		LocalState:         selection.LocalState.State,
+		RemoteRecords:      selection.LocalState.RemoteRecords,
+		LocalRecords:       selection.LocalState.LocalRecords,
+		AppendRecords:      selection.LocalState.AppendRecords,
+		Title:              safeListText(candidate.Summary.Title),
+		Environment:        environmentReport,
+		EnvironmentSkipped: options.noEnvironment,
+		OmittedAgents:      append([]string(nil), selection.OmittedAgents...),
+		OmittedReplicas:    append([]string(nil), selection.OmittedReplicas...),
+		SelectedHeads:      append([]string(nil), selection.SelectedHeads...),
+		OmittedHeads:       append([]string(nil), selection.OmittedHeads...),
+		IncludedByAgent:    cloneResumeCounts(selection.IncludedByAgent),
+		OmittedByAgent:     cloneResumeCounts(selection.OmittedByAgent),
+		UnreadableHeads:    append([]string(nil), selection.UnreadableHeads...),
 	}
 	if workspaceInspection != nil {
 		baseReport.WorkspaceState = &workspaceInspection.Report
@@ -447,7 +451,7 @@ func collectResumeWithPromptMode(ctx context.Context, c *config.Config, configDi
 			return resumeReport{}, fmt.Errorf("resume: target session was restored, but workspace restore failed: %w", err)
 		}
 	}
-	if environmentSession != nil && environmentReport != nil {
+	if !options.noEnvironment && environmentSession != nil && environmentReport != nil {
 		if err := applyEnvironmentComponents(ctx, localState, environmentSession, environmentReport); err != nil {
 			return resumeReport{}, fmt.Errorf("resume: target session was restored, but environment restore failed: %w", err)
 		}

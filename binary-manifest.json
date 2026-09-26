@@ -1,0 +1,10 @@
+{
+  "path": "D:\\세션연동\\ctxhop-gui\\bin\\ctxhop.exe",
+  "size": 11735040,
+  "sha256": "a1702ce1839af90c0ddb87e7c07f1be7899be8ebdd9117fe680d2ec9739c233d",
+  "version": "0.2.0-gui.1",
+  "upstreamTag": "v0.2.0",
+  "upstreamCommit": "b8a18e917a3e93b2e961e8e12c82a4953a98779d",
+  "goVersion": "go1.27.1 windows/amd64",
+  "goArchiveSHA256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d"
+}

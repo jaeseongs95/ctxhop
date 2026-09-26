@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "1",
+  "candidate": "desktop-bundle-candidate-20260926",
+  "go": "1.27.1 windows/amd64",
+  "sourceBase": "D:\\세션연동\\ctxhop-gui\\patched-source",
+  "scope": "new additive opaque bundle transport only; stable source/binary/user stores/shared domain unchanged",
+  "binary": {
+    "path": "D:\\세션연동\\ctxhop-gui-vnext\\bin\\ctxhop.exe",
+    "sha256": "9B14CCD3B33C75EDFD9D424D76FBAF17092364C58721C1BB9C0FD6BA73C7C006"
+  },
+  "claudeBinary": {
+    "path": "D:\\세션연동\\ctxhop-gui-vnext\\bin\\ctxhop-claude.exe",
+    "sha256": "A1702CE1839AF90C0DDB87E7C07F1BE7899BE8EBDD9117FE680D2EC9739C233D"
+  },
+  "validation": {
+    "allSuites": "PASS go test ./... -count=1",
+    "targeted": "PASS bundle security/roundtrip/order/concurrency/CLI",
+    "vet": "PASS related packages",
+    "race": "UNAVAILABLE gcc absent from PATH after enabling CGO_ENABLED=1",
+    "temporaryRoot": "D:\\Go\\temp",
+    "TMP": "D:\\Go\\temp",
+    "TEMP": "D:\\Go\\temp",
+    "GOTMPDIR": "D:\\Go\\temp"
+  },
+  "sources": [
+    {
+      "path": "cmd\\ctxhop\\bundle.go",
+      "sha256": "D4272880DA2DFD71A9D13B1205CB58E4425834E0BF14C26BCAA51525CC7CF987"
+    },
+    {
+      "path": "cmd\\ctxhop\\bundle_test.go",
+      "sha256": "FC726BFC5EEC4D3486157AB3F319A378A779856AFBE21EA23B7E038647E528D3"
+    },
+    {
+      "path": "internal\\desktopbundle\\bundle.go",
+      "sha256": "1814C88F1189FC160ED78FB5E426B2646F562AF79F9D8609941D8C9CDB7E7159"
+    },
+    {
+      "path": "internal\\desktopbundle\\bundle_test.go",
+      "sha256": "F18999193F1C0A32C2FFBB243C3FE8AF59AE0C34981820DD642A0B155CA6C877"
+    },
+    {
+      "path": "internal\\desktopbundle\\path_windows.go",
+      "sha256": "773986B0C1F4E3785362767777D20023DD0463BFDA75FD7C9B7C76892ECAE1E2"
+    },
+    {
+      "path": "internal\\desktopbundle\\path_windows_test.go",
+      "sha256": "2861090D4856919E2A8E6320DFD291E76EC09A28BC2ADE368D796D7FA738B2C1"
+    },
+    {
+      "path": "internal\\desktopbundle\\path_other.go",
+      "sha256": "7B1D997912B7CCD4A633CDEAF12B18E7C68112C920E5352B26F48A99F668F4D2"
+    },
+    {
+      "path": "docs\\desktop-bundle-transport.md",
+      "sha256": "2F4C8C98382EF7AD5163724DF652BBA809F07FB79F87459C33E4FCD1D2B354E8"
+    }
+  ],
+  "logs": [
+    {
+      "path": "verification-results\\bundle-all-suites.txt",
+      "sha256": "77BDBBC1BB47285DB1DE7D9FF5F86B0C4AB4A7096B8302F4E54B3F77A9BD1B10"
+    },
+    {
+      "path": "verification-results\\bundle-race.txt",
+      "sha256": "D4FF5FAB613FFADC69A9C029E6B8A1610D0DE14439DE12E085BF3ECC8FAB9327"
+    },
+    {
+      "path": "verification-results\\bundle-relevant-suites.txt",
+      "sha256": "C4D7B44CDCCB432199E12862F7BEAC67B5D862328E8A907FCB8789AE5227116E"
+    },
+    {
+      "path": "verification-results\\bundle-targeted.txt",
+      "sha256": "6414454E9B9434B74331F8397C63672F6DEA7D70A194AEFD574F17F7291C5C79"
+    }
+  ]
+}
