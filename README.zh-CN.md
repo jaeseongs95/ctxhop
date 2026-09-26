@@ -25,6 +25,8 @@ Session Hub 将 Agent 原生 Session 组织为逻辑 Session，保留来源关�
 上下文创建目标 Agent 的原生 Session。工作区和 Git 交接由用户显式选择，本地加密和
 设备授权保护同步边界。
 
+> **此 fork**（`jaeseongs95/ctxhop`）新增了用于 Claude Code 和 Codex Desktop 对话的 [Windows GUI](#windows-gui-此-fork)。下方的 CLI 安装包来自上游项目 [`CCCCY-ci/ctxhop`](https://github.com/CCCCY-ci/ctxhop)。
+
 ## 主要功能
 
 - **跨设备恢复 Session**：在另一台已授权设备上继续项目 Session。
@@ -32,27 +34,6 @@ Session Hub 将 Agent 原生 Session 组织为逻辑 Session，保留来源关�
 - **Agent 切换**：使用 `ctxhop session switch` 将所选上下文带入另一个 Agent 的新原生 Session。
 - **工作区交接**：按需随 Session 携带指定的工作区文件与 Git 状态。
 - **本地优先存储**：数据在设备本地加密，并保存到由你控制的后端。
-
-## 结构关系
-
-CtxHop 使用清晰的层级关系：
-
-~~~text
-Domain
-└── Hub
-    └── Project
-        └── Session
-            ├── Claude Code 原生 Session / Replica
-            └── Codex 原生 Session / Replica
-~~~
-
-- **Domain**：加密同步边界。Remote 命名空间、密钥文件和已授权设备共同定义一个共享数据空间。
-- **Hub**：Domain 内的项目组织空间，用于分组和隔离项目；新建 Domain 时会自动创建 `default` Hub。
-- **Project**：工作区、Git 状态和 Session 的项目级边界。
-- **Session**：跨 Agent 共享的一段逻辑开发上下文。
-
-在常规操作中，Domain 和 `default` Hub 由系统自动处理，用户直接操作当前 Project 及其
-Session。仅当需要在同一授权 Domain 内划分不同项目组时，才需要切换或创建其他 Hub。
 
 ## 演示
 
@@ -237,6 +218,51 @@ ctxhop session switch <SESSION_ID> --to codex --launch
 ```
 
 切换到 Claude Code 时，将 `--to codex` 替换为 `--to claude-code`。
+
+## Windows GUI (此 fork)
+
+[`gui/ctxhop-gui-vnext/`](gui/ctxhop-gui-vnext/) 是一个 Windows GUI，可在一个窗口中备份 Claude Code 和 Codex Desktop 对话，并在另一台 PC 上恢复。它使用 Windows PowerShell 5.1 运行。
+
+1. 从此 fork 的 [Releases](https://github.com/jaeseongs95/ctxhop/releases) 下载 `CtxHop-GUI-vNext-<日期>.zip`。
+2. **解压前先解除锁定**：右键点击 zip，选择 **属性**，勾选 **解除锁定**；或运行 `Unblock-File .\CtxHop-GUI-vNext-<日期>.zip`。否则 Windows 会阻止解压出的脚本，GUI 会直接打不开，也没有任何提示。
+3. 解压后运行 `ctxhop-gui-vnext\Run-CtxHop-GUI-vNext.cmd`。
+
+- 每次备份一个对话。Codex Desktop 恢复会先预览所选备份，再让你为每一项选择处理方式（默认全部为跳过）。
+- 界面支持韩语和英语，在设置页的 **Language / 언어** 中选择后重新启动 GUI 即可生效。
+- Codex Desktop 对话传输使用 `ctxhop bundle` 命令。发布 zip 中的 `bin\ctxhop.exe` 和 `bin\ctxhop-claude.exe` 由 GUI 按 SHA-256 固定校验，两者都没有提交到本仓库。
+- 这是预览版，尚未在两台 PC 之间实际往返验证。
+
+设置、使用和恢复步骤见 [GUI README（英文）](gui/ctxhop-gui-vnext/README.en.md)。
+
+## 故障排查
+
+- **命令失败但原因不明**：运行 `ctxhop doctor` 检查配置、后端、Agent、项目和 Hook 状态。CtxHop 还会在[配置目录](#配置)中按天写入 `logs/ctxhop-YYYY-MM-DD.log`，失败的命令会以 `result=failed` 和错误信息记录。
+- **`ctxhop list` 或 `ctxhop project bind` 报告 conflicting project bindings**：父目录和它的某个子目录绑定到了不同的 identity。用 `ctxhop project list` 找到它们，再用 `ctxhop project unbind --identity <ID> --path <DIR>` 解除其中一个。解除绑定只修改本地配置，Session 和远端数据保持不变。如果解除的是某个使用非默认 Hub 的 identity 的最后一个绑定，重新绑定时需要再次指定 Hub（`--hub`）。
+- **`ctxhop init` 因两次密码不一致或 Recovery Key 确认错误而中止**：不会保存任何内容，重新运行 `ctxhop init` 即可。
+- **忘记加密密码**：运行 `ctxhop passphrase reset` 并输入 Recovery Key。要修改已知的密码，请运行 `ctxhop passphrase change`。
+- **解压发布 zip 后 Windows GUI 打不开**：删除解压出的文件夹，解除 zip 的锁定后重新解压。
+- GUI 的其他问题见 [GUI README 的 Troubleshooting](gui/ctxhop-gui-vnext/README.en.md#troubleshooting)。
+
+## 结构关系
+
+CtxHop 使用清晰的层级关系：
+
+~~~text
+Domain
+└── Hub
+    └── Project
+        └── Session
+            ├── Claude Code 原生 Session / Replica
+            └── Codex 原生 Session / Replica
+~~~
+
+- **Domain**：加密同步边界。Remote 命名空间、密钥文件和已授权设备共同定义一个共享数据空间。
+- **Hub**：Domain 内的项目组织空间，用于分组和隔离项目；新建 Domain 时会自动创建 `default` Hub。
+- **Project**：工作区、Git 状态和 Session 的项目级边界。
+- **Session**：跨 Agent 共享的一段逻辑开发上下文。
+
+在常规操作中，Domain 和 `default` Hub 由系统自动处理，用户直接操作当前 Project 及其
+Session。仅当需要在同一授权 Domain 内划分不同项目组时，才需要切换或创建其他 Hub。
 
 ## 同步内容
 
