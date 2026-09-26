@@ -32,13 +32,20 @@
 | 복구 중 구조 재확인 | `recover`가 쓰기 잠금 전에만 DB 구조를 확인(6차 감사 F5) | 잠금(`BEGIN IMMEDIATE`) 안에서 `check_schema`를 한 번 더 실행 | `test_26`(첫 검사와 잠금 사이 구조 변경 시 차단, 7차 감사 N2) |
 | zip 경로 구분자 | `Compress-Archive`가 역슬래시 경로로 저장 | .NET `ZipFile.CreateFromDirectory`로 만들어 `/` 경로로 저장 | zip 항목 검사 |
 
+## GitHub PR 검토 중 고친 것
+
+| 항목 | 문제 | 조치 | 확인 |
+|---|---|---|---|
+| Worker 결과 파일 | GUI가 띄운 `Worker.ps1`이 `ClaudeWorker.ps1 -LibraryOnly`를 dot-source하면 ClaudeWorker의 `param` 블록이 같은 스코프의 `$RequestFile`·`$ResultFile`을 빈 값으로 다시 묶음. 요청을 읽지 못하고 결과 파일도 쓰지 못해 GUI의 모든 작업이 "작업 창이 중단되었습니다"로 끝남. 기존 시험은 Worker를 라이브러리로만 불러 이 경로를 실행하지 않았음(언어 선택 작업 중 발견) | dot-source 전에 두 경로를 보관했다가 되돌림 | `Test-DesktopWorker`가 GUI처럼 Worker를 별도 프로세스로 실행해 결과 파일을 확인. 수정 전 Worker에서는 실패 |
+| macOS CI | `internal/desktopbundle`의 경로 검사가 상위 폴더의 모든 링크를 거부하는데(의도한 보안 동작), macOS 임시 폴더 `/var`가 `/private/var` 링크라 bundle 시험 11개가 실패 | 제품 검사는 그대로 두고, 시험이 링크를 푼 임시 폴더(`filepath.EvalSymlinks`)를 쓰도록 수정 | GitHub CI |
+
 ## 실행한 검사 (Windows PowerShell 5.1, Python 3.12.14 Codex 번들, 엔진 `0.158.0-alpha.2.1`)
 
 | 검사 | 결과 | 원시 로그 |
 |---|---|---|
 | `backend\test_suite.py` (일반·위험 원본 정책 2회, 각 run마다 native probe + 단위 시험) | 각 26/26 통과, `ok: true` | `..\검증자료\suite-492977b8b2d04583aeed9be12a84659d\` |
 | `Test-DesktopIntegration.ps1` (고정한 실제 백엔드. 차단 경로 + 시험 전용 진입점을 쓴 백업→전송→미리보기→복원→재검사 성공 경로, 엔진 불일치 미리보기 차단, staging 정리, 수동 진입점) | 32 assertions 통과 | `..\검증자료\ps51-r6\Test-DesktopIntegration.txt` |
-| `Test-DesktopWorker.ps1` | 59 assertions 통과 | `..\검증자료\ps51-r6\Test-DesktopWorker.txt` |
+| `Test-DesktopWorker.ps1` | 59 assertions 통과. Worker 결과 파일 수정 뒤 61 assertions 통과 | `..\검증자료\ps51-r6\Test-DesktopWorker.txt` (수정 뒤 실행은 PR 브랜치에서) |
 | `Test-DesktopGUI.ps1` | 25 assertions 통과 | `..\검증자료\ps51-r6\Test-DesktopGUI.txt` |
 | `Test-ClaudeWorker.ps1` | 37 groups, 640 assertions, 0 failures | `..\검증자료\ps51-r6\Test-ClaudeWorker.txt` |
 | `Test-ClaudeGUI.ps1` | 93 assertions, 5,000개 합성 목록 첫 표시 201ms | `..\검증자료\ps51-r6\Test-ClaudeGUI.txt` |
@@ -61,7 +68,7 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 | `bin\ctxhop.exe` (bundle 전송, Worker 고정, 변경 없음) | `9B14CCD3B33C75EDFD9D424D76FBAF17092364C58721C1BB9C0FD6BA73C7C006` |
 | `bin\ctxhop-claude.exe` (`0.2.0-gui.1`, 변경 없음) | `A1702CE1839AF90C0DDB87E7C07F1BE7899BE8EBDD9117FE680D2EC9739C233D` |
 | `ClaudeWorker.ps1` (안정판 Worker와 동일, 변경 없음) | `D08E9A15A19C8F3D09126EF8535CFD13AE39D9CFF3BC9BADA1DCE53C4741E47F` |
-| `Worker.ps1` | `F3FAC75DF08183BE4A21EB7500175165DF572E18627AFE06534E0C2E31DBC483` |
+| `Worker.ps1` (결과 파일 경로 보관 수정) | `549FC0AD3CB8D028442443E9CDC4AB1654DE7EF53BAEB29AF906E6B01E903FA7` |
 | `GUI.ps1` (완료 문구, 작업 불가 행의 백업 열·선택 안내, 설정 탭 안내 문구만 변경) | `A66668A61C73F59EDC2071966C8C14CE6D7A9F75275EA21A21E9D9752CFEC5CD` |
 
 `transport-source\`와 `bin\ctxhop.exe`는 노트북 세션 결과를 그대로 옮겼습니다. 이 PC에는 Go가 없어 Go 시험을 다시 실행하지 않았고, 기록된 결과(`transport-source\verification-results\`: 전체 suite 통과, race는 gcc 부재로 미실행)를 근거로 둡니다.

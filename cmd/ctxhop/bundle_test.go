@@ -18,7 +18,7 @@ import (
 )
 
 func TestBundleCLIIsolatedAuthorizedRoundtrip(t *testing.T) {
-	configDir, remoteRoot, files := t.TempDir(), t.TempDir(), t.TempDir()
+	configDir, remoteRoot, files := resolvedTempDir(t), resolvedTempDir(t), resolvedTempDir(t)
 	t.Setenv("CTXHOP_CONFIG_DIR", configDir)
 	store, err := remote.NewDir(remoteRoot)
 	if err != nil {
@@ -95,4 +95,15 @@ func TestBundleOptionsRejectHostileAndIncompleteRequests(t *testing.T) {
 	if err := writeCommandDiscovery(&help, []string{"bundle", "get"}); err != nil || !strings.Contains(help.String(), "--output") {
 		t.Fatal("bundle discovery missing")
 	}
+}
+
+// resolvedTempDir resolves system links such as macOS /var -> /private/var.
+// Bundle paths refuse every symlinked ancestor by design.
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }

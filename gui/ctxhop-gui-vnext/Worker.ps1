@@ -3,7 +3,10 @@
 param([string]$RequestFile, [string]$ResultFile, [switch]$LibraryOnly)
 $ErrorActionPreference='Stop'
 $script:VNextLibraryOnly=[bool]$LibraryOnly
+# ClaudeWorker.ps1의 param 블록이 dot-source될 때 이 스코프의 요청·결과 경로를 빈 값으로 다시 묶으므로 보관했다가 되돌린다.
+$script:VNextRequestFile=$RequestFile; $script:VNextResultFile=$ResultFile
 . (Join-Path $PSScriptRoot 'ClaudeWorker.ps1') -LibraryOnly
+$RequestFile=$script:VNextRequestFile; $ResultFile=$script:VNextResultFile
 $script:ClaudeJobCore=${function:Invoke-JobCore}
 $script:ClaudeFindExecutable=${function:Find-Executable}
 # Release integration replaces these pins only after reviewing the final candidate.

@@ -20,7 +20,7 @@ import (
 
 func fixture(t *testing.T) (*remote.Dir, *ecdh.PrivateKey, string, Metadata) {
 	t.Helper()
-	root := t.TempDir()
+	root := resolvedTempDir(t)
 	store, err := remote.NewDir(root)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func fixture(t *testing.T) (*remote.Dir, *ecdh.PrivateKey, string, Metadata) {
 
 func publish(t *testing.T, store *remote.Dir, identity *ecdh.PrivateKey, root string, m Metadata, body []byte) Result {
 	t.Helper()
-	input := filepath.Join(t.TempDir(), "input.zip")
+	input := filepath.Join(resolvedTempDir(t), "input.zip")
 	if err := os.WriteFile(input, body, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestMultiChunkRoundtripEncryptedAndImmutable(t *testing.T) {
 	if err != nil || len(items) != 1 || items[0].Metadata != m {
 		t.Fatalf("list: %v %v", items, err)
 	}
-	output := filepath.Join(t.TempDir(), "output.zip")
+	output := filepath.Join(resolvedTempDir(t), "output.zip")
 	got, err := Get(context.Background(), store, []*ecdh.PrivateKey{identity}, nil, result.ID, output)
 	if err != nil || got != result {
 		t.Fatalf("get: %v %v", got, err)
@@ -131,7 +131,7 @@ func TestCorruptionWrongKeyChunkSwapAndNoPartialOutput(t *testing.T) {
 				sealed, _ := crypto.Encrypt(identity.PublicKey(), metadataKey, data)
 				os.WriteFile(filepath.Join(root, filepath.FromSlash(metadataKey)), sealed, 0600)
 			}
-			outputRoot := t.TempDir()
+			outputRoot := resolvedTempDir(t)
 			output := filepath.Join(outputRoot, "result.zip")
 			if _, err := Get(context.Background(), store, keys, nil, result.ID, output); err == nil {
 				t.Fatal("attack accepted")
@@ -179,7 +179,7 @@ func TestMetadataAndIDHostileInputs(t *testing.T) {
 
 func TestOversizeInputRefusedBeforePublishing(t *testing.T) {
 	store, identity, _, m := fixture(t)
-	input := filepath.Join(t.TempDir(), "huge.zip")
+	input := filepath.Join(resolvedTempDir(t), "huge.zip")
 	f, err := os.Create(input)
 	if err != nil {
 		t.Fatal(err)
@@ -204,10 +204,10 @@ func TestMembershipAndEmptyArchive(t *testing.T) {
 	if err != nil || len(items) != 0 {
 		t.Fatal("unauthorized source listed")
 	}
-	if _, err := Get(context.Background(), store, []*ecdh.PrivateKey{identity}, map[string]struct{}{"other": {}}, result.ID, filepath.Join(t.TempDir(), "out")); err == nil {
+	if _, err := Get(context.Background(), store, []*ecdh.PrivateKey{identity}, map[string]struct{}{"other": {}}, result.ID, filepath.Join(resolvedTempDir(t), "out")); err == nil {
 		t.Fatal("unauthorized source downloaded")
 	}
-	if _, err := Get(context.Background(), store, []*ecdh.PrivateKey{identity}, nil, result.ID, filepath.Join(t.TempDir(), "empty")); err != nil {
+	if _, err := Get(context.Background(), store, []*ecdh.PrivateKey{identity}, nil, result.ID, filepath.Join(resolvedTempDir(t), "empty")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -229,7 +229,7 @@ func TestFailedUploadDoesNotPublishMetadataOrDeleteAdjacentData(t *testing.T) {
 	store, identity, _, m := fixture(t)
 	ctx := context.Background()
 	store.Put(ctx, "adjacent", strings.NewReader("keep"), 4)
-	input := filepath.Join(t.TempDir(), "input")
+	input := filepath.Join(resolvedTempDir(t), "input")
 	os.WriteFile(input, make([]byte, ChunkBytes+1), 0600)
 	failure := &failUpload{Remote: store}
 	if _, err := Put(ctx, failure, identity.PublicKey(), "device1", input, m); err == nil {
@@ -249,7 +249,7 @@ func TestFailedUploadDoesNotPublishMetadataOrDeleteAdjacentData(t *testing.T) {
 
 func TestConcurrentImmutableSnapshots(t *testing.T) {
 	store, identity, _, m := fixture(t)
-	input := filepath.Join(t.TempDir(), "input")
+	input := filepath.Join(resolvedTempDir(t), "input")
 	os.WriteFile(input, []byte("snapshot"), 0600)
 	var workers sync.WaitGroup
 	results := make(chan Result, 8)
@@ -283,4 +283,15 @@ func TestConcurrentImmutableSnapshots(t *testing.T) {
 	if err != nil || len(items) != 8 {
 		t.Fatalf("concurrent snapshot count: %d %v", len(items), err)
 	}
+}
+
+// resolvedTempDir resolves system links such as macOS /var -> /private/var.
+// Bundle paths refuse every symlinked ancestor by design.
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
