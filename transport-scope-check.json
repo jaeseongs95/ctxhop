@@ -1,0 +1,7 @@
+{
+  "base": "D:\\세션연동\\ctxhop-gui\\patched-source",
+  "candidate": "D:\\세션연동\\ctxhop-gui-vnext\\transport-source",
+  "originalFilesCount": 402,
+  "changedOrMissingOriginalFiles": [],
+  "result": "PASS all original patched-source files preserved byte-for-byte"
+}

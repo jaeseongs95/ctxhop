@@ -43,6 +43,31 @@ func TestParseResumeOptionsUsesPreviewAndWorkspaceScopes(t *testing.T) {
 	}
 }
 
+func TestResumeNoEnvironmentFlagAndHelp(t *testing.T) {
+	for _, args := range [][]string{
+		{"--no-environment", "native-session"},
+		{"native-session", "--no-environment", "--no-workspace-context"},
+	} {
+		options, err := parseResumeOptions(args)
+		if err != nil || !options.noEnvironment || options.session != "native-session" {
+			t.Fatalf("parse %v = %+v, %v", args, options, err)
+		}
+	}
+	options, err := parseResumeOptions([]string{"--no-environment=false", "native-session"})
+	if err != nil || options.noEnvironment {
+		t.Fatalf("explicit false = %+v, %v", options, err)
+	}
+	for _, path := range [][]string{{"resume"}, {"session", "resume"}} {
+		var output bytes.Buffer
+		if err := writeCommandDiscovery(&output, path); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(output.String(), "--no-environment") {
+			t.Fatalf("help %v does not advertise --no-environment: %s", path, output.String())
+		}
+	}
+}
+
 func TestSafeResumePlanErrorPrioritizesContextFailure(t *testing.T) {
 	timeout := safeResumePlanError(errors.Join(syncer.ErrIncompleteRemoteSession, context.DeadlineExceeded))
 	if got, want := timeout.Error(), "resume: timed out while downloading the remote session; retry on a stable connection"; got != want {
