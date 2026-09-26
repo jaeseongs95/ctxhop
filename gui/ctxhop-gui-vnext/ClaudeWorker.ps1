@@ -28,15 +28,33 @@ function Normalize-ProjectPath([string]$Value) {
     elseif ($full.StartsWith('\\?\')) { $full=$full.Substring(4) }
     return $full.TrimEnd('\')
 }
+function Get-CtxFailureReason([string]$Command, [datetimeoffset]$Since) {
+    # ctxhop은 실패 이유를 작업 창에만 쓰고 창은 바로 닫히므로, 같은 명령이 남긴 로그 줄에서 이유를 읽는다.
+    # ponytail: 오늘 날짜 로그만 본다. 자정을 넘긴 작업은 종료 코드만 보인다.
+    $file = Join-Path (Get-ConfigRoot) ('logs\ctxhop-{0}.log' -f $Since.LocalDateTime.ToString('yyyy-MM-dd'))
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return '' }
+    $reason = ''
+    foreach ($line in [IO.File]::ReadAllLines($file)) {
+        $match = [regex]::Match($line, '^time=(\S+) level=ERROR msg=command_finished command=(\S+) result=failed .*? error="(.*)"$')
+        $at = [datetimeoffset]::MinValue
+        if ($match.Success -and $match.Groups[2].Value -eq $Command -and [datetimeoffset]::TryParse($match.Groups[1].Value, [ref]$at) -and $at -ge $Since) {
+            $reason = try { [regex]::Unescape($match.Groups[3].Value) } catch { $match.Groups[3].Value }
+        }
+    }
+    return $reason
+}
 function Invoke-Ctx([string[]]$Arguments, [switch]$Json) {
     $exe = Find-Executable 'ctxhop'
-    if ($Json) {
-        $output = & $exe @Arguments
-        if ($LASTEXITCODE -ne 0) { throw (T 'CwCtxFailed' $Arguments[0] $LASTEXITCODE) }
-        return ($output -join "`n" | ConvertFrom-Json)
+    # 로그 시각은 밀리초까지만 적히므로 시작 시각도 밀리초로 자른다.
+    $since = [datetimeoffset]::FromUnixTimeMilliseconds([datetimeoffset]::Now.ToUnixTimeMilliseconds())
+    if ($Json) { $output = & $exe @Arguments } else { & $exe @Arguments | Out-Host }
+    if ($LASTEXITCODE -ne 0) {
+        $message = T 'CwCtxFailed' $Arguments[0] $LASTEXITCODE
+        $reason = Get-CtxFailureReason $Arguments[0] $since
+        if ($reason) { $message += "`r`n" + $reason }
+        throw $message
     }
-    & $exe @Arguments | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw (T 'CwCtxFailed' $Arguments[0] $LASTEXITCODE) }
+    if ($Json) { return ($output -join "`n" | ConvertFrom-Json) }
 }
 function Assert-Project([object]$Job) {
     if (-not $Job.projectPath -or -not (Test-Path -LiteralPath $Job.projectPath -PathType Container)) { throw (T 'CwSelectProjectFolder') }
@@ -56,7 +74,18 @@ function Assert-AgentClosed([string]$Agent) {
             ($_.Name -eq 'node.exe' -and $_.CommandLine -match '(?i)(@anthropic-ai[\\/]claude-code|[\\/]claude-code[\\/])')
         }
     })
-    if ($running.Count) { throw (T 'CwAgentRunning' $Agent ($running.ProcessId -join ', ')) }
+    if ($running.Count) { throw (T 'CwAgentRunning' $Agent (($running | ForEach-Object { "$($_.Name) (PID $($_.ProcessId))" }) -join ', ')) }
+}
+function Assert-NoBindingOverlap([string]$Path, [string]$Identity) {
+    # ctxhop은 상위·하위 폴더가 서로 다른 공통 이름으로 등록되면 그 안의 목록·등록을 모두 거부하므로 등록 전에 막는다.
+    # 같은 폴더를 다른 이름으로 다시 등록하는 경우는 ctxhop이 직접 거부한다.
+    $path = Normalize-ProjectPath $Path
+    foreach ($binding in @((Read-Config).projects.bindings)) {
+        $root = Normalize-ProjectPath $binding.localRoot
+        if ($binding.identity -ne $Identity -and ($path.StartsWith("$root\", [StringComparison]::OrdinalIgnoreCase) -or $root.StartsWith("$path\", [StringComparison]::OrdinalIgnoreCase))) {
+            throw (T 'CwBindingOverlap' $binding.localRoot $binding.identity)
+        }
+    }
 }
 function Assert-NativeId([string]$Id) {
     $guid = [guid]::Empty
@@ -257,8 +286,28 @@ function Invoke-JobCore([object]$Job) {
         Bind {
             $null = Read-Config
             if (-not (Test-Path -LiteralPath $Job.projectPath -PathType Container) -or -not $Job.identity) { throw (T 'CwBindInputRequired') }
+            Assert-NoBindingOverlap $Job.projectPath $Job.identity
             Invoke-Ctx @('project','bind','--path',$Job.projectPath,'--identity',$Job.identity)
             return @{ message=(T 'CwBindDone') }
+        }
+        Unbind {
+            $null = Read-Config
+            # 폴더가 이미 지워졌어도 등록은 해제할 수 있어야 하므로 폴더 존재는 확인하지 않는다.
+            if (-not $Job.projectPath -or -not $Job.identity) { throw (T 'CwBindInputRequired') }
+            Invoke-Ctx @('project','unbind','--identity',$Job.identity,'--path',$Job.projectPath)
+            return @{ message=(T 'CwUnbindDone') }
+        }
+        PassphraseChange {
+            $null = Read-Config
+            Write-Host (T 'CwPassphraseChangeHint')
+            Invoke-Ctx @('passphrase','change')
+            return @{ message=(T 'CwPassphraseChanged') }
+        }
+        PassphraseReset {
+            $null = Read-Config
+            Write-Host (T 'CwPassphraseResetHint')
+            Invoke-Ctx @('passphrase','reset')
+            return @{ message=(T 'CwPassphraseResetDone') }
         }
         Invite {
             $null = Read-Config

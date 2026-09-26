@@ -188,6 +188,8 @@ try {
         switch ($Arguments[0]) {
             list { return $script:ListReport }
             push { return }
+            project { return }
+            passphrase { return }
             resume {
                 Assert ($Arguments -contains '--no-environment') 'every preview and actual resume must disable receiving environment application'
                 if ($Arguments -contains '--preview') { return $script:Preview }
@@ -637,6 +639,52 @@ try {
         }
         Assert-Throws { Invoke-IsolatedRestoreGate $expected $script:RestoreBinarySHA256 'ctxhop 0.2.0-gui.1' -HashFailure } 'hash read failure' 'unreadable runtime hash rejected'
         Assert ($script:NativeCalls.Count -eq 0) 'runtime gate tests must never invoke a real or fake native exe'
+    }
+    Test-Group 'nested project bindings with another identity are refused before ctxhop' {
+        function New-BindJob([string]$Path, [string]$Identity) { $job=New-Job 'Bind'; $job.projectPath=$Path; $job.identity=$Identity; return $job }
+        $child=Join-Path $script:Project 'child'; $sibling=Join-Path $script:CaseRoot 'sibling'; $prefix="$($script:Project)-2"
+        foreach ($path in @($child,$sibling,$prefix)) { New-Item -ItemType Directory -Path $path | Out-Null }
+        Assert-Throws { Invoke-Job (New-BindJob $child 'other') } '겹칩니다' 'child of a registered folder with another identity'
+        Assert-Throws { Invoke-Job (New-BindJob $script:CaseRoot 'other') } '겹칩니다' 'parent of a registered folder with another identity'
+        Assert (@($script:CtxCalls | Where-Object { $_.Arguments[0] -eq 'project' }).Count -eq 0) 'refused bindings never reach ctxhop'
+        foreach ($case in @(@($child,'synthetic-project'),@($sibling,'other'),@($prefix,'other'))) { $null=Invoke-Job (New-BindJob $case[0] $case[1]) }
+        Assert (@($script:CtxCalls | Where-Object { $_.Arguments[0] -eq 'project' -and $_.Arguments[1] -eq 'bind' }).Count -eq 3) 'same identity, sibling and name-prefix folders are allowed'
+    }
+    Test-Group 'unregister and password actions call the matching ctxhop commands' {
+        $gone=Join-Path $script:CaseRoot 'deleted-folder'
+        $job=New-Job 'Unbind'; $job.projectPath=$gone; $job.identity='old-name'
+        Assert ((Invoke-Job $job).message -eq (T 'CwUnbindDone')) 'unbind reports completion'
+        Assert (($script:CtxCalls[-1].Arguments -join ' ') -eq "project unbind --identity old-name --path $gone") 'unbind works even when the folder no longer exists'
+        $null=Invoke-Job (New-Job 'PassphraseChange'); $null=Invoke-Job (New-Job 'PassphraseReset')
+        Assert ((($script:CtxCalls | Select-Object -Last 2 | ForEach-Object { $_.Arguments -join ' ' }) -join ';') -eq 'passphrase change;passphrase reset') 'password actions run passphrase change and reset'
+        $job=New-Job 'Unbind'; $job.identity=''
+        Assert-Throws { Invoke-Job $job } '입력하세요' 'unbind requires an identity'
+    }
+    Test-Group 'failure reason is read from the same command log line after the start time' {
+        $logs=Join-Path $env:CTXHOP_CONFIG_DIR 'logs'; New-Item -ItemType Directory -Path $logs | Out-Null
+        $log=Join-Path $logs ('ctxhop-{0}.log' -f (Get-Date).ToString('yyyy-MM-dd'))
+        Assert ((Get-CtxFailureReason 'list' ([datetimeoffset]::Now)) -eq '') 'missing log gives no reason'
+        $stamp={ param($offset) ([datetimeoffset]::Now.AddSeconds($offset)).ToString('yyyy-MM-ddTHH:mm:ss.fffzzz') }
+        $lines=@(
+            "time=$(& $stamp -60) level=ERROR msg=command_finished command=list result=failed class=command-failed error=`"old failure`"",
+            "time=$(& $stamp 0) level=INFO msg=command_started command=list",
+            "time=$(& $stamp 0) level=ERROR msg=command_finished command=push result=failed class=command-failed error=`"other command`"",
+            "time=$(& $stamp 0) level=ERROR msg=command_finished command=list result=failed class=command-failed error=`"list: identify the current project: D:\\codex \`"한글\`" conflicting project bindings`""
+        )
+        [IO.File]::WriteAllLines($log,[string[]]$lines,[Text.UTF8Encoding]::new($false))
+        Assert ((Get-CtxFailureReason 'list' ([datetimeoffset]::Now.AddSeconds(-5))) -eq 'list: identify the current project: D:\codex "한글" conflicting project bindings') 'latest matching failure is unescaped'
+        Assert ((Get-CtxFailureReason 'init' ([datetimeoffset]::Now.AddSeconds(-5))) -eq '') 'other commands are ignored'
+        Remove-Item -LiteralPath $log
+        $message = & {
+            function Find-Executable([string]$Name) { return 'Invoke-FailingCtx' }
+            function Invoke-FailingCtx {
+                $line="time=$([datetimeoffset]::Now.ToString('yyyy-MM-ddTHH:mm:ss.fffzzz')) level=ERROR msg=command_finished command=init result=failed class=command-failed error=`"init: encryption passwords do not match; run init again`""
+                [IO.File]::AppendAllText($log,"$line`n",[Text.UTF8Encoding]::new($false))
+                $global:LASTEXITCODE=1
+            }
+            try { & $script:RealInvokeCtx @('init','--no-hook'); '' } catch { $_.Exception.Message }
+        }
+        Assert ($message -match 'ctxhop init' -and $message -match 'encryption passwords do not match') "the GUI error includes the ctxhop reason: $message"
     }
 }
 catch {
