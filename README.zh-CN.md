@@ -13,7 +13,7 @@
   <img src="assets/home.png" alt="CtxHop 欢迎页" width="900">
 </p>
 
-[English](README.md) | 简体中文
+[English](README.md) | 简体中文 | [한국어](README.ko.md)
 
 **换设备，不换上下文。**
 

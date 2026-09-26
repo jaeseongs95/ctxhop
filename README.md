@@ -13,7 +13,7 @@
   <img src="assets/home.png" alt="CtxHop installation complete" width="900">
 </p>
 
-English | [简体中文](README.zh-CN.md)
+English | [简体中文](README.zh-CN.md) | [한국어](README.ko.md)
 
 **Switch devices. Keep your context.**
 
@@ -419,6 +419,27 @@ $env:CTXHOP_CONFIG_DIR = Join-Path $env:USERPROFILE '.ctxhop-custom'
 
 This directory contains local configuration and device keys. Do not commit it
 to a repository or share it publicly.
+
+## Windows GUI (this fork)
+
+This fork adds a Windows GUI in [`gui/ctxhop-gui-vnext/`](gui/ctxhop-gui-vnext/).
+It is a Windows PowerShell 5.1 WinForms front end; start it with
+`Run-CtxHop-GUI-vNext.cmd`.
+
+- Back up and restore Claude Code and Codex Desktop conversations from one
+  window. A backup covers one conversation at a time. A Codex Desktop restore
+  previews the selected backups first and asks you to choose an action for
+  each item (every item defaults to Skip).
+- The UI is in Korean or English. Pick one under **Language / 언어** on the
+  settings tab, then restart the GUI.
+- Codex Desktop transfers use the new `ctxhop bundle` command.
+- The GUI needs the built `bin\ctxhop.exe` and `bin\ctxhop-claude.exe`. It
+  pins both by SHA-256, and neither is committed to this repository.
+- This is a review candidate. A live round trip between two PCs has not been
+  run yet.
+
+See the [GUI README](gui/ctxhop-gui-vnext/README.en.md) for usage steps and
+recovery procedures.
 
 ## Development
 
