@@ -1,5 +1,7 @@
 # CtxHop vNext 검토 후보
 
+한국어 | [English](README.en.md)
+
 Claude Code와 Codex Desktop 대화를 한 창에서 백업·복원하는 별도 후보입니다. 기존 `ctxhop-gui` 묶음과 사용자 저장소를 교체하지 않습니다. `Run-CtxHop-GUI-vNext.cmd`로 실행하며 Windows PowerShell 5.1과 WinForms를 사용합니다.
 
 Codex 경로는 `backend\desktop_sessions.py`와 암호화 bundle 실행 파일 `bin\ctxhop.exe`의 SHA256을 `Worker.ps1`에 고정해 두었습니다. 파일이 없거나 바뀌면 중단합니다.
@@ -46,7 +48,7 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\backend\Invoke-D
 - 선택값: `%LOCALAPPDATA%\CtxHopGUI\vnext-preferences.json`
 - 임시 작업 요청·결과: `%LOCALAPPDATA%\CtxHopGUI\jobs`
 - Codex 백업·검사 파일: `%LOCALAPPDATA%\CtxHopGUI\staging\고유ID`. 각 작업은 새 폴더·새 파일을 만들며 현재 사용자에게만 접근을 허용합니다. 백업 업로드나 복원이 성공하면 그 작업의 평문 사본을 지웁니다. 실패한 작업과 건너뛰거나 취소한 미리보기 폴더는 복원 토큰과 실패 증거를 위해 남으므로, 필요 없으면 직접 지웁니다. 이 폴더의 평문 대화는 Drive로 올리지 마세요.
-- Claude: `ClaudeWorker.ps1`은 기존 안정 Worker(SHA256 `D08E9A15…`)에서 화면·오류 문장만 `Strings.ps1`로 옮긴 사본입니다. `bin/ctxhop-claude.exe`는 기존 `0.2.0-gui.1` 해시를 요구합니다.
+- Claude: `ClaudeWorker.ps1`은 기존 안정 Worker(SHA256 `D08E9A15…`)에서 화면·오류 문장을 `Strings.ps1`로 옮기고 요청의 언어를 적용하는 두 줄만 더한 사본입니다. `bin/ctxhop-claude.exe`는 기존 `0.2.0-gui.1` 해시를 요구합니다.
 - 문장: 화면과 작업 메시지의 한국어·영어 문장은 `Strings.ps1`에 `키=@('한국어','English')`로 모여 있습니다.
 - Codex: `Worker.ps1`이 frozen Python 백엔드와 `bin/ctxhop.exe`의 bundle 명령을 연결합니다. UI는 본문·DB·압축 파일 형식을 직접 해석하지 않습니다.
 
