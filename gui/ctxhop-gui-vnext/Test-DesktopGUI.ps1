@@ -19,6 +19,8 @@ try {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Strings.ps1') -Destination $testDirectory
     . $fixture -SmokeTest
     $timer.Stop(); $filterTimer.Stop()
+    # 뒤에서 가짜로 바꾸는 함수의 원래 판(프로젝트 파일 시험에서 다시 쓴다).
+    $script:RealContinueDesktopPreview=${function:Continue-DesktopPreview}; $script:RealNewDesktopReviewDialog=${function:New-DesktopReviewDialog}
     function Show-Error([string]$Message) {$script:Errors+=,$Message; $status.Text=$Message}
     function Start-Job([hashtable]$Job) {$script:StartedJobs+=,$Job.Clone()}
     $agent.SelectedIndex=1; $project.Text='D:\합성 대상'; $desktopHome.Text='D:\합성 데이터'
@@ -105,7 +107,7 @@ try {
     }
     function Finish-Fake([hashtable]$Job,[object]$Outcome) {
         [IO.File]::WriteAllText($request,'{}')
-        if ($null -ne $Outcome) { $Outcome | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $result -Encoding UTF8 } elseif (Test-Path -LiteralPath $result) { Remove-Item -LiteralPath $result }
+        if ($null -ne $Outcome) { $Outcome | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $result -Encoding UTF8 } elseif (Test-Path -LiteralPath $result) { Remove-Item -LiteralPath $result }
         $script:Pending=@{process=$process;request=$request;result=$result;job=$Job}
         Finish-Job
     }
@@ -231,6 +233,85 @@ try {
         $calls -join ','
     }
     Assert ($stopped -eq '10,11,12') "cancel stops the worker first, then only children created after their parent: $stopped"
+    # 프로젝트 파일: 체크박스(기본 켬)가 백업·복원 작업에 들어간다.
+    Assert ($projectFiles.Visible -and $projectFiles.Checked) 'the project files option is shown and on by default'
+    $j=Base-Job 'Backup'; Assert ($j.projectBackup -eq $true -and $j.projectRestore -eq $true) 'jobs carry the project option'
+    $projectFiles.Checked=$false; $j=Base-Job 'Backup'
+    Assert ($j.projectBackup -eq $false -and $j.projectRestore -eq $false -and $script:Prefs.projectFiles -eq 'off') 'turning it off reaches jobs and preferences'
+    $projectFiles.Checked=$true
+    # 큰 작업 폴더: 예는 함께 백업, 아니요는 그 폴더만 뺌, 취소는 백업 취소. 답을 넣어 같은 백업을 다시 실행한다.
+    $big=@{ok=$true;data=@{needsProjectConfirm=$true;folders=@(@{path='D:\큰 폴더';files=12;bytes=300MB});message='합성 확인 필요'}}
+    foreach ($case in @(@{answer='Yes';key='projectApproved'},@{answer='No';key='projectDeclined'},@{answer='Cancel';key=''})) {
+        $script:StartedJobs=@(); $script:Choice=$case.answer; $script:AskedChoice=''
+        function Ask-Choice([string]$Message) { $script:AskedChoice=$Message; return $script:Choice }
+        Finish-Fake @{agent='codex-desktop';action='Backup';nativeId=$id;remoteId='';title='큰 대화';projectBackup=$true} $big
+        Assert ($script:AskedChoice -like '*D:\큰 폴더 · 파일 12개 · 300MB*' -and $script:AskedChoice -like '*취소: 이번 백업 취소*') "the size question lists the folder: $script:AskedChoice"
+        if ($case.key) { Assert ($script:StartedJobs.Count -eq 1 -and $script:StartedJobs[0].action -eq 'Backup' -and (@($script:StartedJobs[0][$case.key]) -join '|') -eq 'D:\큰 폴더') "answer $($case.answer) reruns the backup with $($case.key)" }
+        else { Assert ($script:StartedJobs.Count -eq 0 -and $status.Text -like '*아무것도 올리지 않았습니다*') 'cancel starts nothing' }
+    }
+    # 폴더 밖 편집과 복원하지 못한 파일은 기록 창에 남는다.
+    Finish-Fake @{agent='codex-desktop';action='Backup';nativeId=$id;remoteId='';title='합성'} @{ok=$true;data=@{message='합성 백업 완료';project=@{folders=@();outside=@('E:\밖\notes.md')}}}
+    Assert ($log.Text -like '*작업 폴더 밖에서 고친 파일(백업하지 않음): E:\밖\notes.md*') 'outside edits are listed after a backup'
+    $script:DesktopApplyQueue=@()
+    Finish-Fake @{agent='codex-desktop';action='Restore';nativeId=$id;remoteId=$a} @{ok=$true;data=@{message='합성 복원 완료';project=@{folders=@(@{failed=@(@{path='src\a.py';reason='잠김'})})}}}
+    Assert ($log.Text -like '*복원하지 못한 프로젝트 파일: src\a.py: 잠김*') 'files that failed to restore are listed'
+    # 전체 백업: 큰 폴더는 이번 실행에서 폴더마다 한 번만 묻고, 답은 뒤 대화에도 쓴다. 취소하면 멈춘다.
+    Fill-Sessions @(foreach ($n in 0..2) { Row $ids[$n] 'D:\codex\AI논문' $true $t1 })
+    $script:StartedJobs=@(); $script:Errors=@(); $script:Choice='No'; $script:AskCount=0
+    function Ask-Choice([string]$Message) { $script:AskCount++; return $script:Choice }
+    Start-BulkBackup
+    $firstId=$script:StartedJobs[0].nativeId
+    Finish-Fake $script:StartedJobs[0] $big
+    Assert ($script:StartedJobs.Count -eq 2 -and $script:StartedJobs[1].nativeId -eq $firstId -and (@($script:StartedJobs[1].projectDeclined) -join '|') -eq 'D:\큰 폴더' -and $script:AskCount -eq 1) 'bulk reruns the same conversation with the answer'
+    Finish-Fake $script:StartedJobs[1] @{ok=$true;data=@{message='합성 백업 완료'}}
+    Assert ($script:StartedJobs.Count -eq 3 -and $script:StartedJobs[2].nativeId -ne $firstId -and (@($script:StartedJobs[2].projectDeclined) -join '|') -eq 'D:\큰 폴더') 'later conversations reuse the answer'
+    $script:Choice='Cancel'
+    Finish-Fake $script:StartedJobs[2] @{ok=$true;data=@{needsProjectConfirm=$true;folders=@(@{path='D:\다른 큰 폴더';files=1;bytes=250MB});message='합성'}}
+    Assert ($null -eq $script:Bulk -and $script:AskCount -eq 2 -and $status.Text -like '*성공 1*하지 않음 2*') "cancel at the size question stops the run: $($status.Text)"
+    if ($script:StartedJobs[-1].action -eq 'List') { Finish-Fake $script:StartedJobs[-1] @{ok=$true;data=@{sessions=@();excluded=0;message='합성 목록'}} }
+    # 미리보기: 검토 창의 프로젝트 파일 열과 상세. 승인하면 이 PC에 없는 추가 폴더만 고른다.
+    $found=[pscustomobject]@{state='found';receipt='D:\staging\project-receipt.json';createdAt='2026-09-27T01:00:00Z';outside=@('E:\밖\notes.md');folders=@(
+        [pscustomobject]@{index=0;role='start';sourcePath='D:\원본\앱';target='D:\이 PC';state='ready';reason='';compare=[pscustomobject]@{new=2;changed=1;same=5;localOnly=3}},
+        [pscustomobject]@{index=1;role='extra';sourcePath='D:\원본\lib';target='';state='needsFolder';reason='';compare=$null},
+        [pscustomobject]@{index=2;role='extra';sourcePath='D:\원본\큰';target='';state='skipped';reason='declined';compare=$null})}
+    $text=Format-ProjectPreview $found
+    Assert ($text -like '*D:\원본\앱 → D:\이 PC: 새 파일 2개, 바뀔 파일 1개(원본 보관), 같은 파일 5개, 이 PC에만 있는 파일 3개(그대로 둠)*' -and $text -like '*D:\원본\lib: 이 PC에 없는 폴더*' -and $text -like '*D:\원본\큰: 백업하지 않음(크기 때문에 뺌)*' -and $text -like '*밖에서 고친 파일 1개*') "project preview text: $text"
+    Assert ((Format-ProjectPreview ([pscustomobject]@{state='none'})) -like '*없습니다*' -and (Format-ProjectPreview ([pscustomobject]@{state='error';reason='합성 오류'})) -like '*합성 오류*' -and (Format-ProjectPreview $null) -like '*선택 꺼짐*') 'none, error and off are explained'
+    $projectReviews=@(
+        [pscustomobject]@{job=@{action='Preview';agent='codex-desktop';nativeId=$id;remoteId=$a;title='프로젝트 있음';sourceCwd='D:\원본\앱';projectPath='D:\이 PC';home='D:\데이터';projectRestore=$true};receipt='fixture-inspect.json';preview=[pscustomobject]@{status='incoming_newer';reason='fixture';token='t-a';source=@{};target=@{}};project=$found},
+        [pscustomobject]@{job=@{action='Preview';agent='codex-desktop';nativeId=[guid]::NewGuid().ToString();remoteId=$b;title='프로젝트 없음';sourceCwd='D:\원본';projectPath='D:\이 PC';home='D:\데이터';projectRestore=$true};receipt='fixture-inspect-2.json';preview=[pscustomobject]@{status='new';reason='fixture';token='t-b';source=@{};target=@{}};project=[pscustomobject]@{state='none'}})
+    $ui=New-DesktopReviewDialog $projectReviews
+    Assert ($ui.table.Rows[0].Cells['project'].Value -eq '폴더 2개 · 새 2 · 바뀜 1 · 고를 폴더 1' -and $ui.table.Rows[1].Cells['project'].Value -eq '없음') "review cells summarize project files: $($ui.table.Rows[0].Cells['project'].Value)"
+    $ui.dialog.Show(); [Windows.Forms.Application]::DoEvents()
+    $ui.table.ClearSelection(); $ui.table.Rows[0].Selected=$true; [Windows.Forms.Application]::DoEvents()
+    Assert ($ui.details.Text -like '*새 파일 2개*') "row details show the project comparison: $($ui.details.Text)"
+    $ui.dialog.Close(); $ui.dialog.Dispose()
+    function New-DesktopReviewDialog([object[]]$Reviews) {
+        # 창을 띄우지 않고 모든 행을 복원으로 고른 뒤 승인한 것처럼 돌려준다.
+        $ui=& $script:RealNewDesktopReviewDialog $Reviews
+        foreach ($row in $ui.table.Rows) { $row.Cells['choice'].Value='공유 백업 복원' }
+        $fake=[pscustomobject]@{real=$ui.dialog}
+        # 처음에는 승인, 다시 띄우면(결정 오류) 취소해 반복이 끝나게 한다.
+        $fake | Add-Member -MemberType ScriptMethod -Name ShowDialog -Value { param($owner) $script:DialogShown++; if ($script:DialogShown -eq 1) {'OK'} else {'Cancel'} }
+        $fake | Add-Member -MemberType ScriptMethod -Name Dispose -Value { $this.real.Dispose() }
+        return @{dialog=$fake;table=$ui.table;accept=$ui.accept;details=$ui.details}
+    }
+    function Pick-ProjectFolder([string]$Source) { $script:Picked+=$Source; return 'D:\고른 폴더' }
+    function Confirm([string]$Message) { $script:Asked=$Message; return $true }
+    $script:DesktopReviews=$projectReviews; $script:DesktopPreviewQueue=@(); $script:StartedJobs=@(); $script:Asked=''; $script:Picked=@(); $script:DialogShown=0; $script:Errors=@()
+    & $script:RealContinueDesktopPreview
+    Assert ($script:DialogShown -eq 1 -and $script:Errors.Count -eq 0) "the review is accepted once without errors: $($script:Errors -join ' | ')"
+    Assert ($script:Asked -like '*새 파일 2개*' -and $script:Asked -like '*함께 올린 프로젝트 파일이 없습니다*') "the apply summary includes project files: $script:Asked"
+    Assert (($script:Picked -join '|') -eq 'D:\원본\lib' -and $script:StartedJobs.Count -eq 1 -and $script:StartedJobs[0].projectTargets['1'] -eq 'D:\고른 폴더' -and $script:StartedJobs[0].projectReceipt -eq 'D:\staging\project-receipt.json') 'only the missing extra folder is chosen and passed to restore'
+    Assert ($script:DesktopApplyQueue.Count -eq 1 -and -not $script:DesktopApplyQueue[0].projectTargets) 'a backup without project files asks nothing'
+    $script:DesktopApplyQueue=@()
+    # Claude Code 미리보기: 확인 창에 프로젝트 파일을 보이고, 복원 작업에 미리보기 기록과 고른 폴더를 넣는다.
+    $script:StartedJobs=@(); $script:Picked=@()
+    Finish-Fake @{agent='claude-code';action='Preview';nativeId=$id;remoteId=('a'*25+'0');title='Claude 대화';identity='합성';projectRestore=$true} @{ok=$true;data=@{message='미리보기 완료';preview=@{session=$id;agent='claude-code';workspace='consistent';differences=0};project=$found}}
+    Assert ($script:Asked -like '*바뀔 파일 1개*' -and $script:StartedJobs.Count -eq 1 -and $script:StartedJobs[0].action -eq 'Restore' -and $script:StartedJobs[0].projectReceipt -eq 'D:\staging\project-receipt.json' -and $script:StartedJobs[0].projectTargets['1'] -eq 'D:\고른 폴더') 'Claude restore carries the project receipt and chosen folder'
+    $script:StartedJobs=@()
+    Finish-Fake @{agent='claude-code';action='Preview';nativeId=$id;remoteId=('a'*25+'0');title='Claude 대화';identity='합성';projectRestore=$false} @{ok=$true;data=@{message='미리보기 완료';preview=@{session=$id;agent='claude-code';workspace='consistent';differences=0}}}
+    Assert ($script:Asked -like '*복원하지 않음(선택 꺼짐)*' -and $script:StartedJobs.Count -eq 1 -and -not $script:StartedJobs[0].projectReceipt) 'with the option off nothing about project files is passed'
     Assert (-not (Test-Path -LiteralPath (Join-Path $testDirectory 'CtxHopGUI\vnext-preferences.json'))) 'isolated GUI tests never save user preferences'
     Write-Output "PASS: $script:Checks isolated Desktop GUI assertions. No native apps or user stores invoked."
 } finally {
