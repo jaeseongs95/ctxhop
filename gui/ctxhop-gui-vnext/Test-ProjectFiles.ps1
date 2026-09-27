@@ -1,0 +1,204 @@
+﻿#requires -Version 5.1
+# 프로젝트 폴더 백업 라이브러리(ProjectFiles.ps1)를 임시 폴더의 합성 프로젝트로 확인한다. 실제 사용자 폴더와 저장소는 읽거나 쓰지 않는다.
+$ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'Strings.ps1')
+. (Join-Path $PSScriptRoot 'ProjectFiles.ps1')
+$script:Checks=0
+function Assert([bool]$Value,[string]$Message) { $script:Checks++; if (-not $Value) { throw "ASSERT: $Message" } }
+function Throws([scriptblock]$Body,[string]$Pattern) {
+    $errorRecord=$null; try { & $Body | Out-Null } catch { $errorRecord=$_ }
+    Assert ($null -ne $errorRecord) 'operation must fail'
+    Assert ($errorRecord.Exception.Message -match $Pattern) "expected $Pattern, got $($errorRecord.Exception.Message)"
+}
+function Write-Fixture([string]$Root,[hashtable]$Files) {
+    foreach ($name in $Files.Keys) {
+        $path=Join-Path $Root $name
+        $null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
+        [IO.File]::WriteAllText($path,$Files[$name],[Text.UTF8Encoding]::new($false))
+    }
+}
+function Get-Sha([string]$Text) { $sha=[Security.Cryptography.SHA256]::Create(); try { Get-ProjectHex ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text))) } finally { $sha.Dispose() } }
+function New-TestZip([string]$Path,[hashtable]$Files,[scriptblock]$Tamper) {
+    # 합성 스냅숏. $Tamper가 manifest를 고친 뒤 hash를 다시 계산하지 않으면 hash 불일치가 된다.
+    $entries=@($Files.Keys | Sort-Object | ForEach-Object { [pscustomobject]@{path=$_;size=[Text.Encoding]::UTF8.GetByteCount($Files[$_]);sha256=(Get-Sha $Files[$_])} })
+    $manifest=[pscustomobject]@{version=1;hash=(Get-ProjectContentHash $entries);files=$entries}
+    $extra=@{}
+    if ($Tamper) { & $Tamper $manifest $extra }
+    $zip=[IO.Compression.ZipFile]::Open($Path,'Create')
+    try {
+        foreach ($name in $Files.Keys) {
+            $writer=[IO.StreamWriter]::new($zip.CreateEntry('files/'+$name.Replace('\','/')).Open(),[Text.UTF8Encoding]::new($false))
+            try { $writer.Write($(if ($extra.ContainsKey($name)) {$extra[$name]} else {$Files[$name]})) } finally { $writer.Dispose() }
+        }
+        foreach ($name in @($extra.Keys | Where-Object { -not $Files.ContainsKey($_) })) {
+            $writer=[IO.StreamWriter]::new($zip.CreateEntry($name).Open()); try { $writer.Write($extra[$name]) } finally { $writer.Dispose() }
+        }
+        $writer=[IO.StreamWriter]::new($zip.CreateEntry('manifest.json').Open(),[Text.UTF8Encoding]::new($false))
+        try { $writer.Write((ConvertTo-Json -InputObject $manifest -Depth 5 -Compress)) } finally { $writer.Dispose() }
+    } finally { $zip.Dispose() }
+    return $Path
+}
+function Get-TreeText([string]$Root) {
+    # 폴더 안 모든 파일의 상대 경로와 내용(비교용).
+    (@(Get-ChildItem -LiteralPath $Root -Recurse -Force -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($Root.Length)+'='+[IO.File]::ReadAllText($_.FullName) })) -join "`n"
+}
+
+$testDirectory=Join-Path ([IO.Path]::GetTempPath()) ('CtxHop-vnext-project-'+[guid]::NewGuid().ToString('N'))
+$oldProfile=$env:USERPROFILE; $oldLocal=$env:LOCALAPPDATA; $oldCeiling=$env:GIT_CEILING_DIRECTORIES
+try {
+    $null=New-Item -ItemType Directory -Path $testDirectory
+    $testDirectory=(Resolve-Path -LiteralPath $testDirectory).ProviderPath
+    # 임시 폴더 위쪽의 저장소를 git이 찾지 않게 한다.
+    $env:GIT_CEILING_DIRECTORIES=$testDirectory
+
+    # 1) 경로 정리: \\?\, /, 겹친 \, 끝 \를 정리하고 상대 경로는 버린다.
+    Assert ((ConvertTo-ProjectPath '\\?\D:\codex\\경력\') -eq 'D:\codex\경력') '\\?\ prefix and doubled backslashes are normalized'
+    Assert ((ConvertTo-ProjectPath '\\?\UNC\server\share\x') -eq '\\server\share\x') 'long UNC prefix becomes a UNC path'
+    Assert ((ConvertTo-ProjectPath 'D:/a/b/') -eq 'D:\a\b') 'forward slashes are normalized'
+    Assert ((ConvertTo-ProjectPath 'D:\') -eq 'D:\') 'drive root keeps its backslash'
+    Assert ($null -eq (ConvertTo-ProjectPath 'relative\x') -and $null -eq (ConvertTo-ProjectPath '\rooted') -and $null -eq (ConvertTo-ProjectPath '')) 'relative and drive-relative paths are rejected'
+
+    # 2) 폴더 고르기: 안의 폴더는 합치고, 넓은 폴더·시작 폴더의 부모·임시·설정 폴더는 뺀다. 폴더 밖 편집은 목록만.
+    $env:USERPROFILE='C:\Users\fixture'; $env:LOCALAPPDATA='C:\Users\fixture\AppData\Local'
+    $picked=Get-ProjectFolders 'D:\work\proj' @('\\?\D:\work\proj\sub','E:\other\child','e:\OTHER','D:\','D:\','D:\work','C:\Users\fixture','C:\Users\fixture\.claude\projects\x','C:\Users\fixture\AppData\Local\Temp\t','F:\tools\a','F:\tools\b') @('D:\work\proj\a.txt','G:\notes\n.md','g:\NOTES\n.md','C:\Users\fixture\.codex\config.toml','C:\Users\fixture\AppData\Local\Temp\x.txt','E:\other\child\y.txt','H:\\double\\z.txt')
+    Assert ((@($picked.folders | ForEach-Object { "$($_.role):$($_.path)" }) -join '|') -eq 'start:D:\work\proj|extra:e:\OTHER|extra:F:\tools\a|extra:F:\tools\b') "folders: $(@($picked.folders | ForEach-Object path) -join '|')"
+    Assert ((@($picked.skipped | ForEach-Object { "$($_.reason):$($_.path)" }) -join '|') -eq 'tooBroad:D:\|parentOfStart:D:\work|tooBroad:C:\Users\fixture') "skipped: $(@($picked.skipped | ForEach-Object path) -join '|')"
+    Assert (($picked.outside -join '|') -eq 'G:\notes\n.md|H:\double\z.txt') "outside edits: $($picked.outside -join '|')"
+    $settings=Get-ProjectFolders 'C:\Users\fixture\.claude' @() @()
+    Assert ($settings.folders.Count -eq 0 -and $settings.skipped[0].reason -eq 'agentSettings') 'an agent settings folder is never a project even as the start folder'
+    $broad=Get-ProjectFolders 'C:\Users\fixture' @() @()
+    Assert ($broad.folders.Count -eq 0 -and $broad.skipped[0].reason -eq 'tooBroad') 'the user profile itself is too broad'
+    $env:USERPROFILE=$oldProfile; $env:LOCALAPPDATA=$oldLocal
+
+    # 3) Claude Code 대화 파일: cwd와 편집 도구의 절대 경로만 모은다.
+    $jsonl=Join-Path $testDirectory 'session.jsonl'
+    [IO.File]::WriteAllLines($jsonl,[string[]]@(
+        '{"type":"user","cwd":"D:\\codex\\\uacbd\ub825","message":{"content":"hi"}}',
+        '{"type":"assistant","cwd":"D:\\codex\\경력","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"D:\\codex\\경력\\a.md"}},{"type":"tool_use","name":"Read","input":{"file_path":"C:\\read-only.txt"}}]}}',
+        '{"type":"assistant","cwd":"E:\\side","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"relative.txt"}},{"type":"tool_use","name":"NotebookEdit","input":{"notebook_path":"F:\\nb\\x.ipynb"}}]}}',
+        'not json {"cwd":"broken',
+        '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"MultiEdit","input":{"file_path":"\\\\server\\share\\m.txt"}}]}}'
+    ),[Text.UTF8Encoding]::new($false))
+    $work=Read-ClaudeWorkData @($jsonl)
+    Assert (($work.cwds -join '|') -eq 'D:\codex\경력|E:\side') "claude cwds: $($work.cwds -join '|')"
+    Assert (($work.edits -join '|') -eq 'D:\codex\경력\a.md|F:\nb\x.ipynb|\\server\share\m.txt') "claude edits: $($work.edits -join '|')"
+
+    # 4) 백업 안 경로 검사.
+    foreach ($good in @('src\a.txt','한글 폴더\메모.txt','.gitignore','a.b\c')) { Assert (Test-ProjectEntryPath $good) "safe path accepted: $good" }
+    foreach ($bad in @('','..\x','a\..\b','.\a','C:\x','a:b','\x','a/b','a\\b','.git\config','A\.GIT\hooks\x','GIT~1\config','CON','nul.txt','a\com1','a.','a \b','.env','sub\.env.local','sub\id_rsa','x.pem','k.KEY',('a'*1100))) {
+        Assert (-not (Test-ProjectEntryPath $bad)) "unsafe path rejected: $bad"
+    }
+
+    # 5) Git이 아닌 폴더: 생성 폴더·.git·비밀 파일·정션을 뺀다.
+    $walk=Join-Path $testDirectory 'walk'; $outsideDir=Join-Path $testDirectory 'outside'
+    Write-Fixture $walk @{'src\main.py'='print(1)';'한글 폴더\메모.txt'='메모';'README.md'='# r';'.env'='SECRET=1';'config\.env.local'='S=2';'keys\server.pem'='pem';'id_ed25519'='key';'node_modules\x\index.js'='x';'sub\build\out.bin'='b';'.git\config'='[core]'}
+    Write-Fixture $outsideDir @{'secret.txt'='outside'}
+    $null=New-Item -ItemType Junction -Path (Join-Path $walk 'linked') -Target $outsideDir
+    $list=Get-ProjectFileList $walk
+    Assert ($list.method -eq 'walk') "non-git folder is walked, got $($list.method)"
+    Assert ((@($list.files | ForEach-Object path) -join '|') -eq 'README.md|src\main.py|한글 폴더\메모.txt') "walk files: $(@($list.files | ForEach-Object path) -join '|')"
+    Assert ($list.excluded.secret -eq 4 -and $list.excluded.generated -eq 2 -and $list.excluded.link -eq 1) "walk exclusions: $($list.excluded | ConvertTo-Json -Compress)"
+    Assert ($list.bytes -eq (($list.files | Measure-Object size -Sum).Sum)) 'walk byte total'
+
+    # 6) Git 저장소: .gitignore를 따르고, 생성 폴더 규칙은 쓰지 않으며, 지워진 추적 파일과 비밀 파일은 뺀다. 하위 폴더는 그 폴더 기준.
+    $repo=Join-Path $testDirectory 'repo'
+    Write-Fixture $repo @{'.gitignore'="ignored.log`nout/`n";'a.txt'='a';'ignored.log'='x';'out\x.bin'='x';'.env'='S=1';'node_modules\keep.js'='k';'sub\s.txt'='s';'한글.txt'='한';'deleted.txt'='d'}
+    $git=(Get-Command git -CommandType Application | Select-Object -First 1).Source
+    & $git -C $repo init -q; Assert ($LASTEXITCODE -eq 0) 'git init'
+    & $git -C $repo add deleted.txt; Assert ($LASTEXITCODE -eq 0) 'git add'
+    Remove-Item -LiteralPath (Join-Path $repo 'deleted.txt')
+    $list=Get-ProjectFileList $repo
+    Assert ($list.method -eq 'git') 'git repository uses git ls-files'
+    Assert ((@($list.files | ForEach-Object path) -join '|') -eq '.gitignore|a.txt|node_modules\keep.js|sub\s.txt|한글.txt') "git files: $(@($list.files | ForEach-Object path) -join '|')"
+    Assert ($list.excluded.secret -eq 1) 'secret file excluded even when git would add it'
+    $sub=Get-ProjectFileList (Join-Path $repo 'sub')
+    Assert ($sub.method -eq 'git' -and (@($sub.files | ForEach-Object path) -join '|') -eq 's.txt') 'a subfolder of a repository lists paths relative to itself'
+
+    # 7) 스냅숏: 만들고 읽으면 같은 내용 해시, 미리 구한 해시와 같고, 내용이 바뀌면 해시가 바뀐다.
+    $list=Get-ProjectFileList $walk
+    $zipA=Join-Path $testDirectory 'a.zip'; $zipB=Join-Path $testDirectory 'b.zip'
+    $snapA=New-ProjectSnapshot $list $zipA
+    $read=Read-ProjectSnapshot $zipA
+    Assert ($snapA.files -eq 3 -and $snapA.hash -match '^[0-9a-f]{64}$' -and $read.hash -eq $snapA.hash -and $read.files.Count -eq 3) 'snapshot round trip keeps the content hash'
+    Assert ((Get-ProjectManifest $list).hash -eq $snapA.hash) 'hash-only pass matches the snapshot hash'
+    Assert ((New-ProjectSnapshot $list $zipB).hash -eq $snapA.hash) 'same content gives the same hash'
+    $files=@($read.files); [array]::Reverse($files)
+    Assert ((Get-ProjectContentHash $files) -eq $snapA.hash) 'content hash does not depend on order'
+    $empty=Join-Path $testDirectory 'empty'; $null=New-Item -ItemType Directory -Path $empty
+    $zipE=Join-Path $testDirectory 'e.zip'
+    $null=New-ProjectSnapshot (Get-ProjectFileList $empty) $zipE
+    Assert ((Read-ProjectSnapshot $zipE).files.Count -eq 0) 'an empty folder makes a readable empty snapshot'
+    [IO.File]::WriteAllText((Join-Path $walk 'README.md'),'# changed')
+    Assert ((Get-ProjectManifest (Get-ProjectFileList $walk)).hash -ne $snapA.hash) 'changed content changes the hash'
+    [IO.File]::WriteAllText((Join-Path $walk 'README.md'),'# r')
+    $locked=[IO.FileStream]::new((Join-Path $walk 'src\main.py'),'Open','ReadWrite','None')
+    try { $partial=New-ProjectSnapshot (Get-ProjectFileList $walk) (Join-Path $testDirectory 'locked.zip') } finally { $locked.Dispose() }
+    Assert ($partial.files -eq 2 -and ($partial.unreadable -join '|') -eq 'src\main.py') 'a locked file is left out and listed'
+
+    # 8) 비교와 복원: 새 파일은 쓰고, 바뀐 파일은 원본을 복구 폴더에 남기고, 같은 파일과 이 PC에만 있는 파일은 그대로 둔다.
+    $target=Join-Path $testDirectory 'target'; $recovery=Join-Path $testDirectory 'recovery'
+    Write-Fixture $target @{'README.md'='# r';'src\main.py'='print(2)';'local-only.txt'='keep';'.env'='LOCAL=1'}
+    $compare=Compare-ProjectSnapshot $read $target
+    Assert ($compare.new -eq 1 -and $compare.changed -eq 1 -and $compare.same -eq 1 -and $compare.localOnly -eq 1 -and ($compare.changedPaths -join '|') -eq 'src\main.py') "compare counts: $($compare | ConvertTo-Json -Compress)"
+    $restored=Restore-ProjectSnapshot $zipA $target $recovery
+    Assert ($restored.written -eq 2 -and $restored.backedUp -eq 1 -and $restored.same -eq 1 -and $restored.failed.Count -eq 0) "restore counts: $($restored | ConvertTo-Json -Compress)"
+    Assert ([IO.File]::ReadAllText((Join-Path $target 'src\main.py')) -eq 'print(1)' -and [IO.File]::ReadAllText((Join-Path $target '한글 폴더\메모.txt')) -eq '메모') 'restored content matches the backup'
+    Assert ([IO.File]::ReadAllText((Join-Path $recovery 'src\main.py')) -eq 'print(2)') 'the replaced original is in the recovery folder'
+    Assert ([IO.File]::ReadAllText((Join-Path $target 'local-only.txt')) -eq 'keep' -and [IO.File]::ReadAllText((Join-Path $target '.env')) -eq 'LOCAL=1') 'files only on this PC are kept'
+    Assert (-not @(Get-ChildItem -LiteralPath $target -Recurse -Force -Filter '*.part').Count) 'no temporary part files remain'
+    $again=Compare-ProjectSnapshot $read $target
+    Assert ($again.new -eq 0 -and $again.changed -eq 0 -and $again.same -eq 3) 'a second compare finds everything the same'
+    $fresh=Join-Path $testDirectory 'fresh\deep'
+    Assert ((Compare-ProjectSnapshot $read $fresh).new -eq 3) 'a missing target counts every file as new'
+    $restored=Restore-ProjectSnapshot $zipA $fresh (Join-Path $testDirectory 'recovery2')
+    Assert ($restored.written -eq 3 -and -not (Test-Path -LiteralPath (Join-Path $testDirectory 'recovery2'))) 'a missing target is created and nothing is backed up'
+
+    # 9) 위험한 스냅숏: 쓰기 전에 거부하고 대상 폴더는 그대로다.
+    $victim=Join-Path $testDirectory 'victim'; Write-Fixture $victim @{'keep.txt'='keep'}
+    $before=Get-TreeText $testDirectory
+    $hostile=[ordered]@{
+        traversal={ New-TestZip (Join-Path $testDirectory 'h1.zip') @{'..\escaped.txt'='x'} }
+        gitHook={ New-TestZip (Join-Path $testDirectory 'h2.zip') @{'.git\hooks\pre-commit'='x'} }
+        shortName={ New-TestZip (Join-Path $testDirectory 'h3.zip') @{'GIT~1\config'='x'} }
+        secret={ New-TestZip (Join-Path $testDirectory 'h4.zip') @{'.env'='x'} }
+        badHash={ New-TestZip (Join-Path $testDirectory 'h5.zip') @{'a.txt'='x'} { param($m,$e) $m.hash='0'*64 } }
+        extraEntry={ New-TestZip (Join-Path $testDirectory 'h6.zip') @{'a.txt'='x'} { param($m,$e) $e['files/b.txt']='hidden' } }
+        sizeMismatch={ New-TestZip (Join-Path $testDirectory 'h7.zip') @{'a.txt'='x'} { param($m,$e) $e['a.txt']='longer' } }
+        duplicateCase={ New-TestZip (Join-Path $testDirectory 'h8.zip') @{'a.txt'='x'} { param($m,$e) $m.files=@($m.files)+[pscustomobject]@{path='A.txt';size=1;sha256=(Get-Sha 'x')}; $m.hash=Get-ProjectContentHash $m.files } }
+        badVersion={ New-TestZip (Join-Path $testDirectory 'h9.zip') @{'a.txt'='x'} { param($m,$e) $m.version=2 } }
+    }
+    foreach ($name in $hostile.Keys) {
+        $zip=& $hostile[$name]
+        Throws { Restore-ProjectSnapshot $zip $victim (Join-Path $testDirectory "rec-$name") } '프로젝트 백업'
+        Assert (-not (Test-Path -LiteralPath (Join-Path $testDirectory "rec-$name"))) "$name leaves no recovery folder"
+    }
+    Remove-Item -LiteralPath @(Get-ChildItem -LiteralPath $testDirectory -Filter 'h*.zip' | ForEach-Object FullName)
+    Assert ((Get-TreeText $testDirectory) -eq $before) 'hostile snapshots change no file'
+    # 내용이 기록된 해시와 다르면(크기는 같음) 그 파일만 쓰지 않는다.
+    $tampered=New-TestZip (Join-Path $testDirectory 'tampered.zip') @{'keep.txt'='same';'new.txt'='abc'} { param($m,$e) $e['keep.txt']='SAME' }
+    $restored=Restore-ProjectSnapshot $tampered $victim (Join-Path $testDirectory 'rec-tampered')
+    Assert ($restored.written -eq 1 -and $restored.failed.Count -eq 1 -and $restored.failed[0].path -eq 'keep.txt' -and $restored.backedUp -eq 0) "tampered content fails alone: $($restored | ConvertTo-Json -Compress)"
+    Assert ([IO.File]::ReadAllText((Join-Path $victim 'keep.txt')) -eq 'keep' -and -not @(Get-ChildItem -LiteralPath $victim -Force -Filter '*.part').Count) 'the original stays and no part file remains'
+    # 대상 안의 정션을 거쳐 쓰지 않는다.
+    $null=New-Item -ItemType Junction -Path (Join-Path $victim 'link') -Target $outsideDir
+    $viaLink=New-TestZip (Join-Path $testDirectory 'link.zip') @{'link\secret.txt'='overwritten'}
+    Throws { Restore-ProjectSnapshot $viaLink $victim (Join-Path $testDirectory 'rec-link') } '링크나 정션'
+    Assert ([IO.File]::ReadAllText((Join-Path $outsideDir 'secret.txt')) -eq 'outside') 'a junction inside the target is not written through'
+    Throws { Restore-ProjectSnapshot $zipA ([IO.Path]::GetPathRoot($testDirectory)) (Join-Path $testDirectory 'rec-root') } '링크나 정션'
+
+    # 10) 영어 문장.
+    Set-Language 'en'
+    Throws { Restore-ProjectSnapshot $viaLink $victim (Join-Path $testDirectory 'rec-en') } 'link or junction'
+    Set-Language 'ko'
+
+    Write-Output "PASS: $script:Checks isolated project file assertions. Fixtures only; no user folders or stores touched."
+} finally {
+    $env:USERPROFILE=$oldProfile; $env:LOCALAPPDATA=$oldLocal; $env:GIT_CEILING_DIRECTORIES=$oldCeiling
+    $resolved=[IO.Path]::GetFullPath($testDirectory); $temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')+'\'
+    if (-not $resolved.StartsWith($temp,[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($resolved) -notmatch '^CtxHop-vnext-project-[a-f0-9]{32}$') { throw 'Refusing cleanup outside fixture directory' }
+    # 정션은 대상까지 지우지 않도록 먼저 링크만 없앤다.
+    if (Test-Path -LiteralPath $resolved) {
+        Get-ChildItem -LiteralPath $resolved -Recurse -Force -Attributes ReparsePoint | ForEach-Object { [IO.Directory]::Delete($_.FullName) }
+        Remove-Item -LiteralPath $resolved -Recurse -Force
+    }
+}

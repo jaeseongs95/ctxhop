@@ -288,4 +288,10 @@ $script:StringTable=@{
     CwAgentExited=@('에이전트 대화 종료','Agent conversation ended')
     CwOperationBusy=@('다른 CtxHop GUI가 작업 중입니다. 해당 작업이 끝나면 다시 실행하세요.','Another CtxHop GUI is running an operation. Try again when it finishes.')
     CwConsoleHint=@('암호 입력이 필요하면 이 창에서 입력하세요. 완료 결과는 GUI에 표시됩니다.','If a password is needed, enter it in this window. The result will appear in the GUI.')
+    # ProjectFiles.ps1
+    PfTooManyFiles=@('{0} 폴더의 파일이 {1}개를 넘어 프로젝트 백업에서 뺐습니다.','{0} has more than {1} files, so it was left out of the project backup.')
+    PfArchiveInvalid=@('프로젝트 백업 파일의 형식이 올바르지 않습니다({0}). 아무 파일도 쓰지 않았습니다.','The project backup file is malformed ({0}). No files were written.')
+    PfEntryUnsafe=@('프로젝트 백업에 쓸 수 없는 경로가 있습니다: {0}. 아무 파일도 쓰지 않았습니다.','The project backup contains a path that cannot be written: {0}. No files were written.')
+    PfTargetUnsafe=@('링크나 정션을 거치거나 폴더 밖을 가리켜 쓸 수 없는 경로입니다: {0}. 아무 파일도 쓰지 않았습니다.','This path goes through a link or junction, or points outside the folder: {0}. No files were written.')
+    PfHashMismatch=@('{0}의 백업 내용이 기록된 해시와 달라 쓰지 않았습니다.','The backup content of {0} does not match its recorded hash, so it was not written.')
 }
