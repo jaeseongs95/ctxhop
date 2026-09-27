@@ -111,7 +111,7 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 
 감사 지적을 고친 뒤 다시 실행했고 모두 종료 코드 0이었습니다: `Test-Strings` 1342, `Test-DesktopWorker` 61, `Test-DesktopGUI` 27, `Test-ClaudeGUI` 115, `Test-ClaudeWorker` 41 groups·672 assertions, `Test-DesktopIntegration` 32.
 
-폴더 선택 오류를 고친 뒤 6개를 `powershell.exe -NoProfile -STA -ExecutionPolicy RemoteSigned -File`로 다시 실행했고 모두 종료 코드 0이었습니다: `Test-Strings` 1342, `Test-DesktopWorker` 61, `Test-DesktopGUI` 27, `Test-ClaudeGUI` 119, `Test-ClaudeWorker` 41 groups·672 assertions, `Test-DesktopIntegration` 32. 고친 문제는 빈 칸·공백·잘못된 문자가 든 경로에서 **폴더 선택** 세 곳과 **다른 PC용 초대 만들기**가 `LiteralPath` 또는 `Illegal characters in path` 오류를 내던 것입니다. 새 `Test-ClaudeGUI` 검사는 네 버튼을 빈 칸·공백·`a|b`로 눌러 보며, 이전 검사식으로 되돌린 변이 사본에서 실패합니다.
+폴더 선택 오류를 고친 뒤 6개를 `powershell.exe -NoProfile -STA -ExecutionPolicy RemoteSigned -File`로 다시 실행했고 모두 종료 코드 0이었습니다: `Test-Strings` 1342, `Test-DesktopWorker` 61, `Test-DesktopGUI` 27, `Test-ClaudeGUI` 119, `Test-ClaudeWorker` 41 groups·672 assertions, `Test-DesktopIntegration` 32. 고친 문제는 칸이 비었거나 잘못된 문자가 든 경로에서 **폴더 선택** 세 곳과 **다른 PC용 초대 만들기**가 `LiteralPath` 또는 `Illegal characters in path` 오류를 내던 것과, 공백만 든 칸을 대화 상자의 시작 폴더로 넘기던 것입니다. 새 `Test-ClaudeGUI` 검사는 네 버튼을 빈 칸·공백·`a|b`로 눌러 보며, 이전 검사식으로 되돌린 변이 사본에서 실패합니다.
 
 - 전송(`bin\ctxhop.exe`)은 PowerShell 테스트에서 mock이고, 성공 경로의 mock은 bundle 메타데이터 규칙(정확한 7개 필드, BOM 없음, NUL·줄바꿈 없음)을 확인합니다.
 - `backend\test_guard_shim.py`는 시험 전용이며 앱 종료 검사와 엔진 버전 조회만 바꿉니다(엔진은 환경변수 값). Worker·GUI는 이 파일을 호출하지 않습니다. `Test-DesktopIntegration.ps1`의 성공 경로를 다른 PC에서도 다시 돌릴 수 있도록 패키지에 남겨 두었습니다.
@@ -125,9 +125,10 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 
 이 PC에 실제로 설치된 판을 건드리지 않도록, 시험은 AppId와 이름만 바꾼 시험용 빌드로 했습니다(`TEST` 이름, 나머지 설정 동일). 결과:
 
-- 첫 판 방식의 시험용 빌드 위에 새 판을 `/DIR` 없이 덮어 설치: 이전 폴더를 그대로 쓰고, 제거 프로그램은 `unins000` 하나, 패키지 파일 437개가 해시까지 같고, 인터넷 출처 표시(Zone.Identifier)가 없음. 사용자가 만든 `backend\runtime.json`은 유지.
+- 첫 판 방식의 시험용 빌드 위에 새 판을 `/DIR` 없이 덮어 설치: 이전 폴더를 그대로 쓰고, 앱 목록 버전은 `2026.09.27.1`, 제거 프로그램은 `unins000` 하나, 패키지 파일 437개가 해시까지 같고, 인터넷 출처 표시(Zone.Identifier)가 없음. 사용자가 만든 `backend\runtime.json`은 유지.
 - 설치된 복사본에서 시험 6개를 `RemoteSigned`로 실행해 모두 통과.
-- mutex를 잡은 동안 설치와 제거는 종료 코드 1로 멈추고 파일을 바꾸지 않음.
+- mutex를 잡은 동안 설치와 제거는 종료 코드 1로 멈추고 파일을 바꾸지 않음. 대화형으로 실행하면 "CtxHop GUI 작업이 진행 중입니다… 작업이 끝난 뒤 확인을 누르세요" 안내 창을 띄우며, 취소하면 아무것도 바꾸지 않습니다(한국어·English 확인). GUI 창을 닫아도 작업 창(Worker)이 끝날 때까지 이 안내가 나옵니다.
+- 앱 목록의 버전은 첫 판과 같은 형식(`2026.09.27.1`)입니다. Setup을 관리자 권한으로 실행하면 마지막 화면의 실행 선택지를 보이지 않게 해 GUI가 관리자 권한으로 뜨지 않게 했습니다(관리자 권한 실행 자체는 시험하지 않음).
 - 제거 뒤 앱 목록 항목과 바로가기가 사라지고 설치 폴더에는 `backend\runtime.json`만 남음. 인터넷 출처 표시를 붙인 설치 파일로 새로 설치해도 설치된 파일에 표시가 없음.
 - 설치 마법사(한국어·English)는 추가 작업(바탕화면 바로가기, 기본 선택) → 준비 → 완료(실행, 기본 선택) 세 화면입니다. 완료 뒤 실행한 GUI는 64비트 PowerShell에서 최소화되지 않은 창으로 떴고 콘솔 창은 보이지 않았습니다.
 - 바로가기 방식 비교(Windows 11 25H2, 기본 터미널 설정 없음): `.cmd`를 여는 바로가기는 Windows Terminal 창이 잠깐 보였고, PowerShell을 최소화로 직접 여는 바로가기는 콘솔 창이 한 번도 보이지 않았습니다.
