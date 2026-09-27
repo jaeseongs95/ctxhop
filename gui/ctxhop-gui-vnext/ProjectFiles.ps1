@@ -86,10 +86,8 @@ function Read-ClaudeWorkData([string[]]$Files) {
     }
     return [pscustomobject]@{cwds=$cwds.ToArray();edits=$edits.ToArray()}
 }
-function Test-ProjectSecretName([string]$Name) {
-    foreach ($pattern in $script:ProjectSecretNames) { if ($Name -like $pattern) { return $true } }
-    return $false
-}
+$script:ProjectSecretPattern=[regex]::new('^(?:'+(($script:ProjectSecretNames | ForEach-Object { [regex]::Escape($_).Replace('\*','.*') }) -join '|')+')$','IgnoreCase')
+function Test-ProjectSecretName([string]$Name) { return $script:ProjectSecretPattern.IsMatch($Name) }
 function Test-ProjectEntryPath([string]$Path) {
     # 백업 안의 상대 경로. 드라이브·절대 경로·..·.git·짧은 이름(GIT~1)·장치 이름·Windows가 줄이는 끝 점과 공백·비밀 파일은 거부한다.
     if (-not $Path -or $Path.Length -gt 1024 -or $Path.IndexOfAny([IO.Path]::GetInvalidPathChars()) -ge 0 -or $Path.Contains(':') -or $Path.Contains('/') -or $Path.StartsWith('\')) { return $false }
@@ -153,7 +151,7 @@ function Get-ProjectFileList([string]$Root) {
     foreach ($relative in $listed) {
         if ($relative.Split('\') -icontains '.git') { continue }
         if (Test-ProjectSecretName ([IO.Path]::GetFileName($relative))) { $excluded.secret++; continue }
-        $full=Join-Path $Root $relative
+        $full=[IO.Path]::Combine($Root,$relative)
         if (-not [IO.File]::Exists($full)) { continue }   # git이 추적하지만 지워진 파일, 하위 모듈 폴더
         if (-not (Test-ProjectLinkFree $full $Root $cache)) { $excluded.link++; continue }
         $size=([IO.FileInfo]::new($full)).Length; $bytes+=$size
@@ -170,17 +168,26 @@ function Get-ProjectContentHash([object[]]$Entries) {
     $sha=[Security.Cryptography.SHA256]::Create()
     try { return Get-ProjectHex ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($lines -join ''))) } finally { $sha.Dispose() }
 }
-function Open-ProjectSource([string]$Path) { return [IO.FileStream]::new($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]'ReadWrite, Delete') }
-function Get-ProjectFileHash([string]$Path) {
-    $stream=Open-ProjectSource $Path; $sha=[Security.Cryptography.SHA256]::Create()
-    try { return Get-ProjectHex ($sha.ComputeHash($stream)) } finally { $sha.Dispose(); $stream.Dispose() }
+$script:ProjectShare=[IO.FileShare]'ReadWrite, Delete'
+function Open-ProjectSource([string]$Path) { return [IO.FileStream]::new($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,$script:ProjectShare) }
+function Get-ProjectFileHash([string]$Path, [Security.Cryptography.HashAlgorithm]$Sha) {
+    # 파일이 많으면 함수 호출이 해시보다 오래 걸리므로 부르는 쪽이 SHA-256 객체를 넘겨 다시 쓴다.
+    $own=-not $Sha; if ($own) { $Sha=[Security.Cryptography.SHA256]::Create() }
+    $stream=[IO.FileStream]::new($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,$script:ProjectShare)
+    try { return [BitConverter]::ToString($Sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant() } finally { $stream.Dispose(); if ($own) { $Sha.Dispose() } }
 }
 function Get-ProjectManifest([object]$List) {
     # 올리기 전에 같은 내용이 이미 백업돼 있는지 보려고 내용 해시만 먼저 구한다. 읽지 못한 파일은 빼고 목록으로 돌려준다.
     $entries=[Collections.Generic.List[object]]::new(); $unreadable=[Collections.Generic.List[string]]::new()
-    foreach ($file in $List.files) {
-        try { $entries.Add([pscustomobject]@{path=$file.path;size=([IO.FileInfo]::new($file.full)).Length;sha256=(Get-ProjectFileHash $file.full)}) } catch { $unreadable.Add($file.path) }
-    }
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try {
+        foreach ($file in $List.files) {
+            try {
+                $stream=[IO.FileStream]::new($file.full,[IO.FileMode]::Open,[IO.FileAccess]::Read,$script:ProjectShare)
+                try { $entries.Add([pscustomobject]@{path=$file.path;size=$stream.Length;sha256=[BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant()}) } finally { $stream.Dispose() }
+            } catch { $unreadable.Add($file.path) }
+        }
+    } finally { $sha.Dispose() }
     return [pscustomobject]@{hash=(Get-ProjectContentHash $entries.ToArray());files=$entries.Count;unreadable=$unreadable.ToArray()}
 }
 function Copy-ProjectStream([IO.Stream]$From, [IO.Stream]$To, [long]$Limit) {
@@ -240,14 +247,15 @@ function Read-ProjectSnapshot([string]$ZipPath) {
 function Compare-ProjectSnapshot([object]$Snapshot, [string]$Target) {
     # 복원하면 새로 생길 파일, 바뀔 파일(원본 보관), 같은 파일, 이 PC에만 있어 그대로 둘 파일의 수.
     $result=[ordered]@{new=0;changed=0;same=0;localOnly=0;changedPaths=[Collections.Generic.List[string]]::new()}
-    $known=@{}
+    $known=@{}; $sha=[Security.Cryptography.SHA256]::Create()
     foreach ($file in $Snapshot.files) {
         $known[$file.path.ToLowerInvariant()]=$true
-        $full=Join-Path $Target $file.path
+        $full=[IO.Path]::Combine($Target,$file.path)
         if (-not [IO.File]::Exists($full)) { $result.new++ }
-        elseif ((Get-ProjectFileHash $full) -eq $file.sha256) { $result.same++ }
+        elseif ((Get-ProjectFileHash $full $sha) -eq $file.sha256) { $result.same++ }
         else { $result.changed++; if ($result.changedPaths.Count -lt 20) { $result.changedPaths.Add($file.path) } }
     }
+    $sha.Dispose()
     if ([IO.Directory]::Exists($Target)) {
         foreach ($file in (Get-ProjectFileList $Target).files) { if (-not $known.ContainsKey($file.path.ToLowerInvariant())) { $result.localOnly++ } }
     }
