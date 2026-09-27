@@ -36,7 +36,7 @@ Download either the installer or the zip from [Releases](https://github.com/jaes
 
 The installer and the zip include `bin\ctxhop.exe` and `bin\ctxhop-claude.exe`. These builds are not in the repository. See [Integrity checks](#integrity-checks).
 
-**Update both PCs to this build.** It moves subagent conversations together with their parent conversation. Earlier builds cannot read the Codex shared backups this build makes and stop before writing, and Claude companion folders move only between PCs on this build.
+**Update both PCs to this build.** It moves subagent conversations together with their parent conversation, and the files of the folders a conversation worked in ([Moving project files too](#moving-project-files-too)). Earlier builds cannot read the Codex shared backups this build makes and stop before writing, and Claude companion folders and project files move only between PCs on this build.
 
 ## First-time setup
 
@@ -115,7 +115,42 @@ Each backup is a separate encrypted snapshot that holds the parent conversation 
    - A restore leaves alone subagent conversations that are newer on this PC or exist only on this PC.
    - Every conversation in the group uses the working folder chosen in step 1, even a subagent conversation that originally ran in another folder.
 4. Check your choices and the working folder, then approve the restore. If the Codex app is running, the backend stops and asks you to quit it. The GUI never force-closes the Codex or Claude apps. If the check token, backup file, ID, data folder, or target folder changes, run the check again.
-5. Open Codex Desktop yourself and check the UUID, the content, and the working folder. The GUI sends no prompt and no CLI resume command. Prepare project files, Git state, and tools separately.
+5. Open Codex Desktop yourself and check the UUID, the content, and the working folder. The GUI sends no prompt and no CLI resume command. Prepare the Git history (`.git`) and tools separately. For project files, see [Moving project files too](#moving-project-files-too).
+
+## Moving project files too
+
+With **Also back up and restore project files** on the **Backup · Restore** tab (on by default), a backup also uploads the files of the folders the conversation worked in, and a restore brings them back. This works the same for Claude Code and Codex Desktop.
+
+**What is uploaded**
+
+- The folder the conversation started in, and each folder it worked in outside that one (a subagent or a working folder changed midway), each as its own backup. A folder inside another folder is merged into the outer one.
+- In a Git repository, only files not ignored by `.gitignore` (tracked and new files). Outside Git, the `node_modules`, `.venv`, `venv`, `__pycache__`, `dist`, `build`, `.next` and `target` folders are left out.
+- The `.git` folder, names that look like secrets (`.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.kdbx`, SSH keys such as `id_rsa`, `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`) and links and junctions are always left out. File contents are not scanned for secrets, so put secret files with other names in `.gitignore` or keep them outside the project.
+- A whole drive, the user folder itself and anything above it, a parent of the start folder, temporary folders and agent settings folders (`.claude`, `.codex`, `.agents`, `.ctxhop`) are never uploaded.
+- Files the conversation edited outside its working folders are not uploaded; they are only listed (in the log after a backup and in the restore preview).
+- Files that are locked by another program, or whose path is over 260 characters so Windows PowerShell cannot open them, are left out, and their number is reported.
+- A folder with more than 200,000 files (such as a parent folder holding many projects) is not uploaded, and the reason is recorded.
+
+**When and how much**
+
+- Project files are uploaded after the conversation backup. If that fails, the conversation backup stays and the result message gives the reason.
+- A folder whose content matches an earlier backup is not uploaded again; the new backup just links to it. Backing up several conversations from the same folder uploads only the folders that changed.
+- If a folder is 200 MB or larger before compression, the GUI asks before anything is uploaded. **Yes** backs it up too, **No** leaves only that folder out, and **Cancel** cancels the backup. **Back up all filtered** asks once per folder and uses the answer for the rest of the run.
+- A folder that is still over 1 GiB after compression is not uploaded, and the reason is recorded.
+- Folder backups are encrypted separately in the same shared folder as conversation backups. Conversations uploaded outside this GUI, such as by the Claude Code hook's automatic push, get no folder backup.
+
+**Restore**
+
+- The preview downloads the folder state from when that conversation was backed up and compares it with the restore folder. For Codex that is each chosen shared backup; for Claude it is the last backup of that conversation made with this GUI. The confirmation (for Codex, the **Project files** column and the details box) shows for each folder how many files are new, replaced, unchanged, or only on this PC.
+- Files of the start folder go to the folder chosen for this restore (the working folder for Codex, the project folder for Claude). Another folder goes to its original path if that path exists on this PC; otherwise you choose a folder or skip it when you approve.
+- Nothing is deleted. Files only on this PC stay, and before a file is replaced its original is kept under `%LOCALAPPDATA%\CtxHopGUI\project-recovery\<unique ID>\<folder number>` with the same relative path. The restore record is `restore-log.json` in the same folder.
+- Every path and hash in a downloaded backup is checked before anything is written. If any path is absolute, contains `..` or `.git`, has a secret file name, or goes through a link or junction, nothing is written. Each file is first written to a temporary file next to it and replaces the old file only when its hash matches.
+- For Codex, project files are restored only when the conversation was imported or was already the same. If the conversation on this PC is newer, its files stay as they are.
+- To restore only the conversation, clear the option before the preview.
+
+**The design trusts the shared folder**: anyone who can write to it can forge backups ([What you need](#what-you-need)), and restoring a forged folder backup writes files of their choosing into your project folder. Use a folder only you can write to, and after a restore check the changes with `git status` and `git diff`. The originals of replaced files are in the recovery folder above.
+
+**Both PCs must run this build.** Earlier GUI builds show folder backups and link records as unknown rows in the Codex shared backup list. Do not restore those rows (the check stops them).
 
 ## Troubleshooting
 
@@ -176,11 +211,12 @@ This apply also saves the history it replaces in a new recovery folder. The reco
 
 - Preferences: `%LOCALAPPDATA%\CtxHopGUI\vnext-preferences.json`
 - Temporary job requests and results: `%LOCALAPPDATA%\CtxHopGUI\jobs`
-- Codex backup and check files: `%LOCALAPPDATA%\CtxHopGUI\staging\<unique ID>`.
+- Backup and check files (Codex conversations and project files of both agents): `%LOCALAPPDATA%\CtxHopGUI\staging\<unique ID>`.
   - Each job makes a new folder that only the current user can open.
   - When a backup upload or a restore succeeds, the GUI deletes that job's plaintext copy.
   - Folders from failed or cancelled jobs and from skipped previews stay behind for the restore token and failure evidence. Delete them yourself when you no longer need them.
-  - Do not upload the plaintext conversations in this folder to Drive.
+  - Do not upload the plaintext conversations and project files in this folder to Drive.
+- Originals of files replaced by a project restore: `%LOCALAPPDATA%\CtxHopGUI\project-recovery\<unique ID>`
 - Claude recovery records: `%LOCALAPPDATA%\CtxHopGUI\recovery`
 - Codex recovery records: `<Codex data folder>\.ctxhop-desktop-recovery`
 - ctxhop settings and logs: `%USERPROFILE%\.ctxhop` (or `CTXHOP_CONFIG_DIR`)
@@ -191,8 +227,9 @@ The GUI never overwrites a whole session folder or DB.
 
 - `Worker.ps1` pins the SHA256 of `backend\desktop_sessions.py` and `bin\ctxhop.exe`, and checks them before Codex list, backup, and preview. If either file is missing or changed, the GUI stops.
 - `bin\ctxhop-claude.exe` must match the pinned `0.2.0-gui.2` hash before a Claude preview or restore. It is `0.2.0-gui.1` plus companion folder backup and restore (`--sidecar-backup`); its source, patch and build record are in `claude-source\`.
-- `ClaudeWorker.ps1` is a copy of the stable `ctxhop-gui` Worker (SHA256 `D08E9A15…`). It adds the chosen language, failure reasons, the overlapping-registration check, unregistering, and password change and reset. Its backup and restore decisions and its recovery records are unchanged.
-- `Worker.ps1` connects the frozen Python backend to the `bundle` command of `bin\ctxhop.exe`. The UI never parses conversation bodies, the DB, or archive formats itself.
+- `ClaudeWorker.ps1` is a copy of the stable `ctxhop-gui` Worker (SHA256 `D08E9A15…`). It adds the chosen language, failure reasons, the overlapping-registration check, unregistering, password change and reset, and reading ctxhop output as UTF-8. Its backup and restore decisions and its recovery records are unchanged.
+- `Worker.ps1` connects the frozen Python backend to the `bundle` command of `bin\ctxhop.exe`. The UI never parses conversation bodies, the DB, or the conversation backup format itself (the project files zip is made and read by `ProjectFiles.ps1`, below).
+- `ProjectFiles.ps1` picks, lists, compresses, compares and restores project folders. It uses only standard .NET and, when present, `git`.
 - Screen and job text in both languages lives in `Strings.ps1` as `key=@('Korean','English')`.
 - New Codex Desktop engine versions must be verified with `backend\test_suite.py` and then added to `VERSIONS`.
 
@@ -205,11 +242,13 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Test-DesktopWork
 powershell.exe -NoProfile -STA -ExecutionPolicy RemoteSigned -File .\Test-DesktopGUI.ps1
 powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Test-DesktopIntegration.ps1
 powershell.exe -NoProfile -STA -ExecutionPolicy RemoteSigned -File .\Test-Strings.ps1
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Test-ProjectFiles.ps1
 & "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -X utf8 .\backend\test_suite.py --exe 'absolute path of the installed Desktop codex.exe'
 ```
 
 - The first four use a new temporary folder and synthetic metadata. They mock the backend, the transfer, Codex, and Claude.
 - `Test-DesktopIntegration.ps1` creates a test conversation in a temporary folder with the installed Codex Desktop engine. It then calls the **pinned real backend** through the Worker; only the transfer is mocked.
+- `Test-ProjectFiles.ps1` uses synthetic projects (a Git repository and a plain folder) in a temporary folder to check the exclusion rules, compression and hashes, comparison, restore (originals kept, nothing deleted) and refusal of unsafe backups.
 - `Test-Strings.ps1` checks that the strings in both languages pair up and share placeholders. It also looks for untranslated Hangul in the code and checks the English screens and error messages.
 - `backend\test_suite.py` uses an isolated `CODEX_HOME` and fixed localhost responses to create a paginated conversation with the real engine. It then checks porting, reading, and resuming.
 
