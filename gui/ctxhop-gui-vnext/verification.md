@@ -113,6 +113,15 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 
 폴더 선택 오류를 고친 뒤 6개를 `powershell.exe -NoProfile -STA -ExecutionPolicy RemoteSigned -File`로 다시 실행했고 모두 종료 코드 0이었습니다: `Test-Strings` 1342, `Test-DesktopWorker` 61, `Test-DesktopGUI` 27, `Test-ClaudeGUI` 119, `Test-ClaudeWorker` 41 groups·672 assertions, `Test-DesktopIntegration` 32. 고친 문제는 칸이 비었거나 잘못된 문자가 든 경로에서 **폴더 선택** 세 곳과 **다른 PC용 초대 만들기**가 `LiteralPath` 또는 `Illegal characters in path` 오류를 내던 것과, 공백만 든 칸을 대화 상자의 시작 폴더로 넘기던 것입니다. 새 `Test-ClaudeGUI` 검사는 네 버튼을 빈 칸·공백·`a|b`로 눌러 보며, 이전 검사식으로 되돌린 변이 사본에서 실패합니다.
 
+전체 백업과 프로젝트 필터를 넣은 뒤 6개를 같은 명령(`RemoteSigned`)으로 다시 실행했고 모두 종료 코드 0이었습니다: `Test-Strings` 1404, `Test-DesktopWorker` 61, `Test-DesktopGUI` 41, `Test-ClaudeGUI` 119, `Test-ClaudeWorker` 41 groups·672 assertions, `Test-DesktopIntegration` 32.
+- 바꾼 파일은 `GUI.ps1`, `Strings.ps1`, `Test-DesktopGUI.ps1`, README 두 개와 이 문서입니다. Worker와 백엔드는 바꾸지 않았습니다. **필터된 대화 모두 백업**은 기존 한 대화 백업 작업을 GUI가 차례로 실행합니다.
+- 새 `Test-DesktopGUI` 검사는 합성 행으로 다음을 확인합니다.
+  - 프로젝트 필터: `\\?\` 접두사, 대소문자, 끝의 `\`, 하위 폴더, 이름만 비슷한 폴더(`AI논문2`), 이름만 같은 이 PC 폴더와 공유 백업의 차이, 원본 폴더를 모르는 공유 백업.
+  - 전체 백업: 같은 UUID·같은 수정 시각의 공유 백업이 있는 대화와 하위 에이전트 대화를 건너뜀, 시작 전 개수 확인, 한 개씩 실행, 실패해도 계속하고 끝에 한 번 요약, 연속 3개 실패 시 멈춤, 결과 없이 끝난 작업 창을 실패 한 건으로 셈, 첫 취소는 지금 대화를 마친 뒤 멈춤, 끝난 뒤 목록 다시 불러오기.
+- 위 여덟 가지 규칙을 하나씩 뺀 변이 사본 8개에서 `Test-DesktopGUI`가 모두 실패했습니다.
+- 한국어·English 창을 그려 **이 프로젝트 대화만**과 **필터된 대화 모두 백업**이 잘리지 않는 것을 봤습니다. Codex Desktop에서는 늘 꺼져 있던 **선택한 대화 열기** 자리에 **필터된 대화 모두 백업**이 나옵니다.
+- 실제 Codex 대화와 Drive 저장소로 전체 백업을 돌려 보지는 않았습니다. 한 대화 백업 경로는 기존 `Test-DesktopWorker`·`Test-DesktopIntegration`이 확인합니다.
+
 - 전송(`bin\ctxhop.exe`)은 PowerShell 테스트에서 mock이고, 성공 경로의 mock은 bundle 메타데이터 규칙(정확한 7개 필드, BOM 없음, NUL·줄바꿈 없음)을 확인합니다.
 - `backend\test_guard_shim.py`는 시험 전용이며 앱 종료 검사와 엔진 버전 조회만 바꿉니다(엔진은 환경변수 값). Worker·GUI는 이 파일을 호출하지 않습니다. `Test-DesktopIntegration.ps1`의 성공 경로를 다른 PC에서도 다시 돌릴 수 있도록 패키지에 남겨 두었습니다.
 - native 시험은 격리 `CODEX_HOME`과 localhost 고정 응답만 사용했고 외부 모델 호출은 없습니다. 검사 뒤 `%USERPROFILE%\.ctxhop`, 공유 `v1\keyfile`의 수정 시각이 이전과 같고, `%LOCALAPPDATA%\CtxHopGUI`와 임시 fixture가 남지 않은 것을 확인했습니다. PowerShell 7은 이 PC에 없어 실행하지 않았습니다.
@@ -147,8 +156,8 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 | `bin\ctxhop-claude.exe` (`0.2.0-gui.1`, 변경 없음) | `A1702CE1839AF90C0DDB87E7C07F1BE7899BE8EBDD9117FE680D2EC9739C233D` |
 | `ClaudeWorker.ps1` (안정판 `D08E9A15…`에서 문장을 `Strings.ps1`로 옮기고 언어 적용·실패 이유·겹친 등록 차단·등록 해제·암호 변경/초기화 추가) | `97405AABD4B533974D070CA6F7A69B1C1CE537F094489D4924FC32F1F8977823` |
 | `Worker.ps1` (결과 파일 경로 보관 수정, 언어 선택) | `C8AA63D2F8F853A77B5AD48F6E74468E777FA3EDF76C8DF5AC0539F81FE59EA8` |
-| `GUI.ps1` (언어 선택, 사용성 개선, 폴더 선택 빈 칸 오류 수정) | `507B9BF23CBC4CED31568F2B76AD3DE4044E842B865424F7D4A54D5FCD1F04CC` |
-| `Strings.ps1` (한국어·영어 문장 표) | `E04493D126B9EEBEE2A8A4B56C6A42B814E01766DB70FFCD634483382A4BE75A` |
+| `GUI.ps1` (언어 선택, 사용성 개선, 폴더 선택 빈 칸 오류 수정, 전체 백업, 프로젝트 필터) | `7E314C6613141AFC79EF403693B6E93385C4B656698E9316220D6B4D505CA135` |
+| `Strings.ps1` (한국어·영어 문장 표) | `5C4B421C4A3AD616BDB977F82C89931CFD46CFFB8681995D55928435FD790A87` |
 
 `transport-source\`와 `bin\ctxhop.exe`는 노트북 세션 결과를 그대로 옮겼습니다. 이 PC에는 Go가 없어 Go 시험을 다시 실행하지 않았고, 기록된 결과(`transport-source\verification-results\`: 전체 suite 통과, race는 gcc 부재로 미실행)를 근거로 둡니다.
 

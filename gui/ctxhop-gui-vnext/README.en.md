@@ -68,8 +68,12 @@ Choose **Codex Desktop** as the agent and check the **Codex data folder** on the
 
 ### List
 
-The list covers all projects, archived conversations, and shared backups. You can search by title, UUID, or source folder, and the list shows 200 rows per page. When you reload, the search also goes to the backend. The list reads metadata page by page and never scans conversation bodies.
+The list loads all projects, archived conversations, and shared backups. You can search by title, UUID, or source folder, and the list shows 200 rows per page. When you reload, the search also goes to the backend. The list reads metadata page by page and never scans conversation bodies.
 
+- **This project only** (on by default) filters the list by the **Project** folder.
+  - Conversations on this PC appear only if they were started in that folder or below it.
+  - Shared backups appear if their source folder is the same or below it, or if their last folder name is the same. This way a project folder with the same name on another PC shows up even if its path differs. A different project with the same folder name can show up too, so check the source folder in the restore preview.
+  - A leading `\\?\`, letter case, and a trailing `\` are ignored. Clear the box to see all projects.
 - Line breaks in titles become spaces in the shared backup list. The conversation itself does not change.
 - Subagent conversations appear but are marked **Blocked**. Back up the parent conversation instead. Other unsupported conversations, such as ones with registered dynamic tools, stop with a reason before anything is written.
 
@@ -79,6 +83,13 @@ The list covers all projects, archived conversations, and shared backups. You ca
 2. Select one local conversation and click **Back up selected**.
 
 Each backup is a separate encrypted snapshot. Several backups with the same UUID appear as separate rows. The GUI never picks one by date and never overwrites one.
+
+**Back up all filtered** backs up, one by one, every conversation on this PC that matches the current filter (This project only, search, view, date), across all pages.
+- It first shows how many it will back up and skip and asks you to confirm. Keep the Codex app closed until it finishes. Each conversation takes a few seconds.
+- Conversations that already have a shared backup with the same UUID and modification time are skipped, and so are subagent conversations. Running it again uploads only conversations that changed.
+- If one conversation fails, it moves on to the next and shows the done, skipped and failed counts with the reasons at the end. It stops after 3 failures in a row, for example when the app is running.
+- Click **Cancel task** once to stop after the current conversation, or again to stop the task window right away.
+- If anything was backed up, the list reloads to show the new backups.
 
 ### Restore
 
