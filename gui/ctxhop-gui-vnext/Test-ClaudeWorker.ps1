@@ -96,6 +96,7 @@ function Reset-Fixture {
     $script:FakeCodexVersion = 'codex-cli 0.116.0'
     $script:FakeCtxVersion = 'ctxhop 0.2.0'
     $script:FakeCtxRaw = '{invalid json'
+    $script:RelocateBehavior = 'apply'
     $script:BeforeHash = (Get-FileHash -LiteralPath $script:ClaudeFile -Algorithm SHA256).Hash
     $script:CodexBeforeHash = (Get-FileHash -LiteralPath $script:CodexFile -Algorithm SHA256).Hash
 }
@@ -193,6 +194,19 @@ try {
             push { return }
             project { return }
             passphrase { return }
+            remote {
+                # remote relocate: 실제 ctxhop처럼 설정의 저장소 경로를 바꾸거나(apply), 실패하거나(fail), 아무것도 바꾸지 않는다(ignore).
+                if ($script:RelocateBehavior -eq 'fail') { throw 'synthetic relocate failure' }
+                if ($script:RelocateBehavior -eq 'apply') {
+                    # 실제 ctxhop은 새 폴더에 같은 연결의 키 파일이 없으면 거부한다.
+                    if (-not (Test-Path -LiteralPath (Join-Path $Arguments[3] 'v1\keyfile'))) { throw 'synthetic relocate: no store at the new path' }
+                    $file=Join-Path $env:CTXHOP_CONFIG_DIR 'config.json'
+                    $config=Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $config.remote.path=$Arguments[3]
+                    Write-TestJson $file $config
+                }
+                return
+            }
             resume {
                 Assert ($Arguments -contains '--no-environment') 'every preview and actual resume must disable receiving environment application'
                 if ($Arguments -contains '--preview') { return $script:Preview }
@@ -633,12 +647,12 @@ try {
         Assert ($script:CtxCalls.Count -eq 0) 'version failure prevents ctxhop session operations'
     }
     Test-Group 'general operations accept only official or the pinned custom version' {
-        foreach ($version in @('ctxhop 0.2.0','ctxhop 0.2.0-gui.1','ctxhop 0.2.0-gui.2')) {
+        foreach ($version in @('ctxhop 0.2.0','ctxhop 0.2.0-gui.1','ctxhop 0.2.0-gui.2','ctxhop 0.2.0-gui.3')) {
             $script:FakeCtxVersion=$version
             Assert-CtxVersion
             Assert ($true) "general version $version accepted"
         }
-        foreach ($version in @('ctxhop 0.2.0-gui.3','ctxhop 0.2.0-gui.2 extra','ctxhop 0.2.0-unknown','ctxhop 0.1.9')) {
+        foreach ($version in @('ctxhop 0.2.0-gui.4','ctxhop 0.2.0-gui.3 extra','ctxhop 0.2.0-unknown','ctxhop 0.1.9')) {
             $script:FakeCtxVersion=$version
             Assert-Throws { Assert-CtxVersion } '버전|0.2.0' "general version $version rejected"
         }
@@ -659,15 +673,15 @@ try {
     Test-Group 'real restore gate accepts only bundled path plus pinned hash plus custom version' {
         Assert ($script:RestoreBinarySHA256 -cmatch '^[A-Fa-f0-9]{64}$') 'Worker must contain an actual pinned SHA256, not a build placeholder'
         $expected=Join-Path $PSScriptRoot 'bin\ctxhop.exe'
-        Invoke-IsolatedRestoreGate $expected $script:RestoreBinarySHA256 'ctxhop 0.2.0-gui.2'
+        Invoke-IsolatedRestoreGate $expected $script:RestoreBinarySHA256 'ctxhop 0.2.0-gui.3'
         Assert ($true) 'bundled pinned custom runtime accepted'
         $fallback=Join-Path $script:CaseRoot 'official-ctxhop.exe'
-        Assert-Throws { Invoke-IsolatedRestoreGate $fallback $script:RestoreBinarySHA256 'ctxhop 0.2.0-gui.2' } '포함|실행 파일' 'custom version outside bundled path rejected'
-        Assert-Throws { Invoke-IsolatedRestoreGate $expected ('0'*64) 'ctxhop 0.2.0-gui.2' } 'SHA256' 'bundled custom version with wrong binary hash rejected'
-        foreach ($version in @('ctxhop 0.2.0','ctxhop 0.2.0-gui.1','ctxhop 0.2.0-gui.2 extra')) {
+        Assert-Throws { Invoke-IsolatedRestoreGate $fallback $script:RestoreBinarySHA256 'ctxhop 0.2.0-gui.3' } '포함|실행 파일' 'custom version outside bundled path rejected'
+        Assert-Throws { Invoke-IsolatedRestoreGate $expected ('0'*64) 'ctxhop 0.2.0-gui.3' } 'SHA256' 'bundled custom version with wrong binary hash rejected'
+        foreach ($version in @('ctxhop 0.2.0','ctxhop 0.2.0-gui.1','ctxhop 0.2.0-gui.2','ctxhop 0.2.0-gui.3 extra')) {
             Assert-Throws { Invoke-IsolatedRestoreGate $expected $script:RestoreBinarySHA256 $version } '버전' "restore runtime $version rejected"
         }
-        Assert-Throws { Invoke-IsolatedRestoreGate $expected $script:RestoreBinarySHA256 'ctxhop 0.2.0-gui.2' -HashFailure } 'hash read failure' 'unreadable runtime hash rejected'
+        Assert-Throws { Invoke-IsolatedRestoreGate $expected $script:RestoreBinarySHA256 'ctxhop 0.2.0-gui.3' -HashFailure } 'hash read failure' 'unreadable runtime hash rejected'
         Assert ($script:NativeCalls.Count -eq 0) 'runtime gate tests must never invoke a real or fake native exe'
     }
     Test-Group 'nested project bindings with another identity are refused before ctxhop' {
@@ -714,6 +728,48 @@ try {
         Assert ((($script:CtxCalls | Select-Object -Last 2 | ForEach-Object { $_.Arguments -join ' ' }) -join ';') -eq 'passphrase change;passphrase reset') 'password actions run passphrase change and reset'
         $job=New-Job 'Unbind'; $job.identity=''
         Assert-Throws { Invoke-Job $job } '입력하세요' 'unbind requires an identity'
+    }
+    Test-Group 'store move copies only missing files and switches only through ctxhop relocate' {
+        function Write-StoreFile([string]$Root,[string]$Relative,[string]$Text) { $path=Join-Path $Root $Relative; $null=New-Item -ItemType Directory -Force -Path (Split-Path $path); [IO.File]::WriteAllText($path,$Text) }
+        function Get-Tree([string]$Root) { if (-not (Test-Path -LiteralPath $Root)) { return '' }; @(Get-ChildItem -LiteralPath $Root -Recurse -File -Force | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($Root.Length)+'='+[IO.File]::ReadAllText($_.FullName) }) -join '|' }
+        $old=Join-Path $script:CaseRoot 'drive\old store'; $new=Join-Path $script:CaseRoot 'drive\new store'
+        Write-StoreFile $old 'v1\keyfile' 'key'; Write-StoreFile $old 'v1\desktop-bundles\d\1\metadata' 'one'; Write-StoreFile $old 'v1\desktop-bundles\d\2\metadata' 'two'
+        Write-StoreFile $new 'v1\desktop-bundles\d\2\metadata' 'two'
+        $configFile=Join-Path $env:CTXHOP_CONFIG_DIR 'config.json'
+        function Set-Store([string]$Path,[string]$Type='dir') { Write-TestJson $configFile ([pscustomobject]@{syncConfig='disabled'; remote=[pscustomobject]@{type=$Type;path=$Path}; projects=$script:Config.projects}) }
+        function New-MoveJob([string]$Store) { $job=New-Job 'MoveStore'; $job | Add-Member -NotePropertyName store -NotePropertyValue $Store; return $job }
+        Set-Store $old; $oldTree=Get-Tree $old
+        $result=Invoke-Job (New-MoveJob $new)
+        Assert ($result.store -eq $new -and $result.copied -eq 2 -and $result.same -eq 1 -and $result.message -like "*$new*") "move result: $($result | ConvertTo-Json -Compress)"
+        Assert (($script:CtxCalls[-1].Arguments -join '|') -eq "remote|relocate|--path|$new") 'the connection switches only through ctxhop remote relocate'
+        Assert ((Get-Tree $new) -eq ($oldTree -replace [regex]::Escape($old),'') -and (Get-Tree $old) -eq $oldTree) 'missing files are copied, nothing else is written and the old store stays'
+        Assert ((Get-Tree $new) -eq '\v1\desktop-bundles\d\1\metadata=one|\v1\desktop-bundles\d\2\metadata=two|\v1\keyfile=key') "new store tree: $(Get-Tree $new)"
+        # 같은 이름인데 내용이 다른 파일이 있으면(다른 저장소 등) 아무것도 복사하지 않고 연결도 그대로다.
+        $calls=$script:CtxCalls.Count
+        $other=Join-Path $script:CaseRoot 'drive\other store'; Write-StoreFile $other 'v1\keyfile' 'another key'
+        Set-Store $old
+        Assert-Throws { Invoke-Job (New-MoveJob $other) } '내용이 다른 저장소 파일이 1개' 'a store file with other content stops the move'
+        Assert ((Get-Tree $other) -eq '\v1\keyfile=another key') 'nothing is copied next to a conflicting file'
+        $inside=Join-Path $old 'inside'; $null=New-Item -ItemType Directory -Path $inside
+        Assert-Throws { Invoke-Job (New-MoveJob $old) } '이미' 'the same store is refused'
+        Assert-Throws { Invoke-Job (New-MoveJob $inside) } '품고 있어' 'a folder inside the store is refused'
+        Assert-Throws { Invoke-Job (New-MoveJob (Join-Path $script:CaseRoot 'missing')) } '저장소 폴더가 없습니다' 'a missing folder is refused'
+        Set-Store $old 's3'
+        Assert-Throws { Invoke-Job (New-MoveJob $other) } '폴더 저장소만' 'only a folder store moves'
+        Assert ($script:CtxCalls.Count -eq $calls) 'refused moves never reach ctxhop'
+        # ctxhop이 옮기기를 거부하거나 설정이 바뀌지 않으면 실패로 끝난다.
+        $fresh=Join-Path $script:CaseRoot 'drive\fresh store'; $null=New-Item -ItemType Directory -Path $fresh
+        Set-Store $old; $script:RelocateBehavior='fail'
+        Assert-Throws { Invoke-Job (New-MoveJob $fresh) } 'synthetic relocate failure' 'a ctxhop relocate failure is reported'
+        Assert (((Get-Content -LiteralPath $configFile -Raw | ConvertFrom-Json).remote.path) -eq $old) 'the connection stays when ctxhop refuses'
+        $script:RelocateBehavior='ignore'
+        Assert-Throws { Invoke-Job (New-MoveJob $fresh) } '바뀌지 않았습니다' 'a move that does not reach the settings is reported'
+        # 복사본의 해시가 원본과 다르면 제자리로 옮기지 않고 임시 파일도 남기지 않는다.
+        $script:RelocateBehavior='apply'; $calls=$script:CtxCalls.Count
+        $bad=Join-Path $script:CaseRoot 'drive\bad copy'; $null=New-Item -ItemType Directory -Path $bad
+        function Get-FileHash([string]$LiteralPath,[string]$Algorithm) { if ($LiteralPath -like '*.part') { return [pscustomobject]@{Hash=('0'*64)} }; Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $LiteralPath -Algorithm $Algorithm }
+        Assert-Throws { Invoke-Job (New-MoveJob $bad) } '원본과 다릅니다' 'a copy with another hash stops the move'
+        Assert ((Get-Tree $bad) -eq '' -and $script:CtxCalls.Count -eq $calls) 'a bad copy is neither kept nor followed by relocate'
     }
     Test-Group 'failure reason is read from the same command log line after the start time' {
         $logs=Join-Path $env:CTXHOP_CONFIG_DIR 'logs'; New-Item -ItemType Directory -Path $logs | Out-Null

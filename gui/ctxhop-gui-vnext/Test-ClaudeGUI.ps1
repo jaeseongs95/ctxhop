@@ -91,6 +91,12 @@ if ($job.action -eq 'Preview') {
     $data.preview=@{session=$job.nativeId;agent=$job.agent;workspace=$job.projectPath;differences='fixture'}
 }
 if ($job.action -eq 'Restore') { $data.restored=@{session=$job.nativeId;agent=$job.agent} }
+if ($job.action -eq 'MoveStore') {
+    $file=Join-Path $env:CTXHOP_CONFIG_DIR 'config.json'
+    $config=Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
+    $config.remote.path=$job.store
+    $config | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $file -Encoding UTF8
+}
 @{ok=$true;data=$data}|ConvertTo-Json -Depth 10|Set-Content -LiteralPath $ResultFile -Encoding UTF8
 '@
     [IO.File]::WriteAllText($stubPath,$stub,[Text.UTF8Encoding]::new($true))
@@ -292,6 +298,37 @@ if ($job.action -eq 'Restore') { $data.restored=@{session=$job.nativeId;agent=$j
     Assert ($script:Pending.job.action -eq 'Open') 'Accepted restore completion should start Open.'
     Finish-Fixture
     Assert ($null -eq $script:Pending) 'Open completion should return to idle.'
+    # 연결된 뒤 저장소 칸은 ctxhop 설정의 경로가 기준이다. 칸만 바꾸면 적용되지 않으므로 확인·옮기기 뒤에는 실제 경로로 돌아온다.
+    $configFile = Join-Path $fixtureRoot 'config.json'
+    $configBefore = [IO.File]::ReadAllBytes($configFile)
+    $moveButton = $script:Buttons | Where-Object Text -eq '저장소 옮기기'
+    $tabs.SelectedTab = $settings; [Windows.Forms.Application]::DoEvents()
+    $script:Answers = @()
+    $moveButton.PerformClick()
+    Assert ($null -eq $script:Pending -and $script:Errors.Count -eq 1 -and $script:Errors[0] -eq (T 'CwSetupFirst')) 'Moving the store before setup asks to set up first.'
+    $script:Errors = @()
+    $connected = Get-Content -LiteralPath $configFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    $connected | Add-Member -NotePropertyName remote -NotePropertyValue ([pscustomobject]@{type='dir';path='D:\fixture store'})
+    $connected | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $configFile -Encoding UTF8
+    $store.Text = 'D:\typed but not applied'
+    Show-ConnectedStore
+    Assert ($store.Text -eq 'D:\fixture store') 'The store box shows the store in the ctxhop settings, not a typed or saved value.'
+    $store.Text = 'D:\typed but not applied'
+    ($script:Buttons | Where-Object Text -eq '현재 연결 확인').PerformClick()
+    Finish-Fixture
+    Assert ($store.Text -eq 'D:\fixture store') 'Checking the connection puts the store in use back in the box.'
+    $store.Text = 'D:\new store'
+    $script:Answers = @($false)
+    $moveButton.PerformClick()
+    Assert ($null -eq $script:Pending -and $script:LastConfirm -like '*D:\fixture store*D:\new store*') 'Moving the store asks first and names both folders.'
+    $script:Answers = @($true)
+    $moveButton.PerformClick()
+    Assert ($script:Pending.job.action -eq 'MoveStore' -and $script:Pending.job.store -eq 'D:\new store') 'Move store sends the chosen folder.'
+    $store.Text = 'D:\typed while moving'
+    Finish-Fixture
+    Assert ($store.Text -eq 'D:\new store' -and $status.Text -eq 'fixture: MoveStore' -and $script:Errors.Count -eq 0) 'After the move the box shows the store the settings now use.'
+    [IO.File]::WriteAllBytes($configFile, $configBefore)
+    $tabs.SelectedTab = $main; [Windows.Forms.Application]::DoEvents()
     # 빈 칸·공백·잘못된 경로에서 폴더 선택과 초대 만들기를 눌러도 오류 없이 대화 상자를 연다.
     $script:Dialogs = @()
     function Show-Dialog([object]$Dialog) {

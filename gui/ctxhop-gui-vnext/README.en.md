@@ -50,6 +50,12 @@ Use the **Connection · Invite** tab.
    - Keep the recovery key from this step somewhere safe and offline.
 4. **Other PC**: on the first PC, click **Create invite for another PC**. Copy the invite JSON to the other PC. There, choose it under **Invite (other PC)**, enter **This PC name**, and click **Set up / Join by invite**.
 5. A PC that finished setup uses its device authorization, so it does not ask for the password when you list, back up, or restore.
+6. **Move store**: once connected, the **Drive store path** box shows the store this PC really uses (the ctxhop settings). Changing only the text in the box changes nothing. To move to another folder, choose a new folder in the shared folder (empty, or one where the other PC has already moved the store) and click **Move store**.
+   - Only the files of the current store that the new folder lacks are copied, and each copy is checked against the original hash. Then ctxhop switches the connection only after it finds the key file of the same connection in the new folder and this PC is authorized by it (`ctxhop remote relocate`). The password, recovery key and device authorization stay the same.
+   - If the new folder holds a store file with the same name but different content (another store, for example), nothing is copied and the move stops. A folder with the store of another connection is never used.
+   - The old folder is not deleted. Delete it yourself after both PCs have moved.
+   - The other PC keeps using the old folder until it moves too. After Drive has finished syncing, click **Move store** there with the same new folder. Backups that PC made in the old folder in the meantime are copied to the new folder then.
+   - Invites made after the move point to the new folder.
 
 ## Back up and restore Claude Code conversations
 
@@ -237,7 +243,7 @@ The GUI never overwrites a whole session folder or DB.
 ### Integrity checks
 
 - `Worker.ps1` pins the SHA256 of `backend\desktop_sessions.py` and `bin\ctxhop.exe`, and checks them before Codex list, backup, and preview. If either file is missing or changed, the GUI stops.
-- `bin\ctxhop-claude.exe` must match the pinned `0.2.0-gui.2` hash before a Claude preview or restore. It is `0.2.0-gui.1` plus companion folder backup and restore (`--sidecar-backup`); its source, patch and build record are in `claude-source\`.
+- `bin\ctxhop-claude.exe` must match the pinned `0.2.0-gui.3` hash before a Claude preview or restore. It is `0.2.0-gui.1` plus companion folder backup and restore (`--sidecar-backup`) and store relocation (`remote relocate`); its source, patch and build record are in `claude-source\`.
 - `ClaudeWorker.ps1` is a copy of the stable `ctxhop-gui` Worker (SHA256 `D08E9A15…`). It adds the chosen language, failure reasons, the overlapping-registration check, unregistering, password change and reset, and reading ctxhop output as UTF-8. Its backup and restore decisions and its recovery records are unchanged.
 - `Worker.ps1` connects the frozen Python backend to the `bundle` command of `bin\ctxhop.exe`. The UI never parses conversation bodies, the DB, or the conversation backup format itself (the project files zip is made and read by `ProjectFiles.ps1`, below).
 - `ProjectFiles.ps1` picks, lists, compresses, compares and restores project folders. It uses only standard .NET and, when present, `git`.

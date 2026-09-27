@@ -323,7 +323,10 @@ function Finish-Job {
             Unbind { Load-Bindings }
             Status {
                 $log.AppendText("$(T 'GuiStatusLog' $result.data.device $result.data.store $result.data.syncConfig)`r`n")
+                Show-ConnectedStore
             }
+            Setup { Show-ConnectedStore }
+            MoveStore { Show-ConnectedStore }
             Backup {
                 # 큰 작업 폴더가 있으면 아직 아무것도 올리지 않았다. 목록 창에서 고르면 대화와 파일을 함께 올린다.
                 if ($result.data.needsProjectConfirm) {
@@ -562,17 +565,30 @@ $null=New-Control Label 286 17 132 25 (T 'GuiSavedProjects') $main
 $projectPicker=New-Control ComboBox 420 13 564 30 '' $main
 $projectPicker.DropDownStyle='DropDownList'
 $script:Bindings=@()
-function Load-Bindings {
-    $script:Bindings=@(); $projectPicker.Items.Clear()
+function Get-CtxConfig {
+    # 연결된 저장소와 프로젝트 등록은 ctxhop이 쓰는 설정 파일이 기준이다. 없거나 읽지 못하면 $null.
     $configRoot=if ($env:CTXHOP_CONFIG_DIR) {$env:CTXHOP_CONFIG_DIR} else {Join-Path $env:USERPROFILE '.ctxhop'}
     $configFile=Join-Path $configRoot 'config.json'
-    if (Test-Path -LiteralPath $configFile) {
-        try {
-            $config=Get-Content -LiteralPath $configFile -Raw -Encoding UTF8 | ConvertFrom-Json
-            $script:Bindings=@($config.projects.bindings | Where-Object { $_ -and $_.localRoot })
-            foreach ($binding in $script:Bindings) { $projectPicker.Items.Add("$($binding.identity) · $($binding.localRoot)") | Out-Null }
-        } catch {}
-    }
+    if (-not (Test-Path -LiteralPath $configFile)) { return $null }
+    try { return (Get-Content -LiteralPath $configFile -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return $null }
+}
+function Load-Bindings {
+    $script:Bindings=@(); $projectPicker.Items.Clear()
+    $config=Get-CtxConfig
+    if (-not $config) { return }
+    $script:Bindings=@($config.projects.bindings | Where-Object { $_ -and $_.localRoot })
+    foreach ($binding in $script:Bindings) { $projectPicker.Items.Add("$($binding.identity) · $($binding.localRoot)") | Out-Null }
+}
+function Show-ConnectedStore {
+    # 연결된 뒤에는 칸에 이 PC가 실제로 쓰는 저장소를 보인다. 칸만 바뀐 채 적용된 것처럼 보이지 않게 한다.
+    $config=Get-CtxConfig
+    if ($config -and $config.remote.type -eq 'dir' -and $config.remote.path) { $store.Text=[string]$config.remote.path }
+}
+function Start-StoreMove {
+    $job=Base-Job 'MoveStore'
+    $config=Get-CtxConfig
+    if (-not $config -or -not $config.remote.path) { throw (T 'CwSetupFirst') }
+    if (Confirm (T 'GuiMoveStoreConfirm' ([string]$config.remote.path) $job.store "`r`n")) { Start-Job $job }
 }
 Load-Bindings
 $null=New-Control Label 16 60 74 25 (T 'GuiProjectLabel') $main
@@ -626,6 +642,7 @@ $driveHint=New-Control Label 708 416 296 32 (T 'GuiDriveHint') $main; $driveHint
 $null=New-Control Label 22 22 970 42 (T 'GuiSettingsIntro') $settings
 $null=New-Control Label 22 84 150 25 (T 'GuiStorePath') $settings
 $store=New-Control TextBox 182 80 640 28 $script:Prefs.store $settings
+Show-ConnectedStore
 $null=New-Button 834 74 142 (T 'GuiBrowseFolder') $settings { Browse-Folder $store }
 $null=New-Control Label 22 130 150 25 (T 'GuiInviteLabel') $settings
 $invite=New-Control TextBox 182 126 640 28 $script:Prefs.invite $settings
@@ -641,6 +658,7 @@ $languagePicker.DropDownStyle='DropDownList'; $languagePicker.Items.AddRange(@('
 $languagePicker.SelectedIndex=if ($script:UiLanguage -eq 'en') {1} else {0}
 $null=New-Button 22 225 240 (T 'GuiSetupJoin') $settings { Start-Job (Base-Job 'Setup') }
 $null=New-Button 278 225 200 (T 'GuiCheckConnection') $settings { Start-Job (Base-Job 'Status') }
+$null=New-Button 748 225 228 (T 'GuiMoveStore') $settings { Start-StoreMove }
 $null=New-Button 494 225 238 (T 'GuiCreateInvite') $settings {
     $d=[Windows.Forms.SaveFileDialog]::new(); $d.Filter=(T 'GuiInviteFilter'); $d.FileName='ctxhop-invite.json'
     if (Test-Folder $store.Text) { $d.InitialDirectory=$store.Text }

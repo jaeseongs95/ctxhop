@@ -3,7 +3,7 @@
 param([string]$RequestFile, [string]$ResultFile, [switch]$LibraryOnly)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Strings.ps1')
-$script:RestoreBinarySHA256='15CE00DC32BE07ECF089F5D49154469A4B259E1B7EB0ED0123C0FE57152BFC2B'
+$script:RestoreBinarySHA256='45186B1017A0F8969DFC27D248351C275ACB0DFEBF21276AD968E03DC84E650B'
 function Find-Executable([string]$Name) {
     $paths = if ($Name -eq 'ctxhop') {
         @((Join-Path $PSScriptRoot 'bin\ctxhop.exe'), (Join-Path $env:USERPROFILE '.ctxhop\bin\ctxhop.exe'), (Join-Path $env:LOCALAPPDATA 'Programs\CtxHop\bin\ctxhop.exe'))
@@ -66,6 +66,30 @@ function Invoke-Ctx([string[]]$Arguments, [switch]$Json) {
         throw $message
     }
     if ($Json) { return ($output -join "`n" | ConvertFrom-Json) }
+}
+function Copy-StoreFiles([string]$From, [string]$To) {
+    # 옛 저장소 파일 중 새 폴더에 없는 것만 복사한다(다른 PC가 먼저 옮겼거나 Drive가 일부만 받았을 때도 같은 동작).
+    # 같은 이름인데 내용이 다른 파일이 하나라도 있으면 아무것도 복사하지 않는다. 파일마다 옆의 임시 파일에 복사하고 해시가 같을 때만 제자리로 옮긴다.
+    $plan=@(); $same=0; $conflicts=@()
+    if ([IO.Directory]::Exists($From)) {
+        foreach ($file in [IO.Directory]::EnumerateFiles($From,'*','AllDirectories')) {
+            $relative=$file.Substring($From.Length).TrimStart('\')
+            $target=Join-Path $To $relative
+            if (-not [IO.File]::Exists($target)) { $plan+=,@($file,$target,$relative); continue }
+            if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash) { $same++ } else { $conflicts+=$relative }
+        }
+    }
+    if ($conflicts.Count) { throw (T 'CwMoveStoreConflict' $conflicts.Count (@($conflicts | Select-Object -First 5) -join ', ')) }
+    foreach ($item in $plan) {
+        $null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($item[1]))
+        $part="$($item[1]).ctxhop-$([guid]::NewGuid().ToString('N')).part"
+        try {
+            [IO.File]::Copy($item[0],$part,$false)
+            if ((Get-FileHash -LiteralPath $part -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $item[0] -Algorithm SHA256).Hash) { throw (T 'CwMoveStoreCopyMismatch' $item[2]) }
+            [IO.File]::Move($part,$item[1])
+        } finally { if ([IO.File]::Exists($part)) { [IO.File]::Delete($part) } }
+    }
+    return @{copied=$plan.Count; same=$same}
 }
 function Assert-Project([object]$Job) {
     if (-not $Job.projectPath -or -not (Test-Path -LiteralPath $Job.projectPath -PathType Container)) { throw (T 'CwSelectProjectFolder') }
@@ -206,14 +230,14 @@ function Get-CtxVersion {
 }
 function Assert-CtxVersion {
     $version=Get-CtxVersion
-    if ($version -notin @('ctxhop 0.2.0','ctxhop 0.2.0-gui.1','ctxhop 0.2.0-gui.2')) { throw (T 'CwCtxVersionUnsupported' $version) }
+    if ($version -notin @('ctxhop 0.2.0','ctxhop 0.2.0-gui.1','ctxhop 0.2.0-gui.2','ctxhop 0.2.0-gui.3')) { throw (T 'CwCtxVersionUnsupported' $version) }
 }
 function Assert-RestoreRuntime {
     $exe=Find-Executable 'ctxhop'
     $bundled=Join-Path $PSScriptRoot 'bin\ctxhop.exe'
     if ([IO.Path]::GetFullPath($exe) -ne [IO.Path]::GetFullPath($bundled)) { throw (T 'CwRestoreNeedsBundled') }
     if ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -ne $script:RestoreBinarySHA256) { throw (T 'CwRestoreHashMismatch') }
-    if ((Get-CtxVersion) -ne 'ctxhop 0.2.0-gui.2') { throw (T 'CwRestoreVersionUnverified') }
+    if ((Get-CtxVersion) -ne 'ctxhop 0.2.0-gui.3') { throw (T 'CwRestoreVersionUnverified') }
 }
 function Assert-ListSchema([object]$Report) {
     if ($Report.scope -ne 'project' -or -not ($Report.PSObject.Properties.Name -contains 'sessions') -or $null -eq $Report.sessions -or $Report.sessions -isnot [array]) { throw (T 'CwUnknownListResponse') }
@@ -299,6 +323,21 @@ function Invoke-JobCore([object]$Job) {
             Invoke-Ctx @('version')
             $config = Read-Config
             return @{ device=$config.device.name; backend=$config.remote.type; store=$config.remote.path; syncConfig=$config.syncConfig; message=(T 'CwStatusDone') }
+        }
+        MoveStore {
+            # 저장소 폴더를 바꾼다. 옛 저장소를 새 폴더로 복사한 뒤, ctxhop이 새 폴더에서 같은 연결과 이 PC의 권한을 확인해야만 연결이 바뀐다.
+            $config = Read-Config
+            if ($config.remote.type -ne 'dir') { throw (T 'CwMoveStoreNotDir') }
+            if (-not $Job.store -or -not (Test-Path -LiteralPath $Job.store -PathType Container)) { throw (T 'CwStoreFolderMissing') }
+            $old = Normalize-ProjectPath ([string]$config.remote.path)
+            $new = Normalize-ProjectPath ([string]$Job.store)
+            if ($new -ieq $old) { throw (T 'CwMoveStoreSame' $old) }
+            if ($new.StartsWith("$old\",[StringComparison]::OrdinalIgnoreCase) -or $old.StartsWith("$new\",[StringComparison]::OrdinalIgnoreCase)) { throw (T 'CwMoveStoreNested') }
+            $copy = Copy-StoreFiles (Join-Path $old 'v1') (Join-Path $new 'v1')
+            Invoke-Ctx @('remote','relocate','--path',$new)
+            $moved = [string](Read-Config).remote.path
+            if ((Normalize-ProjectPath $moved) -ine $new) { throw (T 'CwMoveStoreNotApplied') }
+            return @{ store=$moved; copied=$copy.copied; same=$copy.same; message=(T 'CwMoveStoreDone' $moved $copy.copied $copy.same) }
         }
         Bind {
             $null = Read-Config
