@@ -71,7 +71,8 @@ function Read-ClaudeWorkData([string[]]$Files) {
     $cwds=[Collections.Generic.List[string]]::new(); $edits=[Collections.Generic.List[string]]::new()
     foreach ($file in $Files) {
         # Claude Code가 쓰는 중일 수 있으므로 쓰기를 막지 않고 읽는다.
-        $reader=[IO.StreamReader]::new((Open-ProjectSource $file),[Text.Encoding]::UTF8)
+        # 열지 못하는 파일(경로가 260자를 넘는 하위 에이전트 파일 등)은 건너뛴다. 백업할 폴더를 덜 찾을 뿐 대화 백업은 막지 않는다.
+        try { $reader=[IO.StreamReader]::new((Open-ProjectSource $file),[Text.Encoding]::UTF8) } catch { continue }
         try { while ($null -ne ($line=$reader.ReadLine())) {
             $match=[regex]::Match($line,'"cwd"\s*:\s*"((?:[^"\\]|\\.)*)"')
             if ($match.Success) { $cwd=[regex]::Unescape($match.Groups[1].Value); if (-not $cwds.Contains($cwd)) { $cwds.Add($cwd) } }
@@ -152,6 +153,8 @@ function Get-ProjectFileList([string]$Root) {
         if ($relative.Split('\') -icontains '.git') { continue }
         if (Test-ProjectSecretName ([IO.Path]::GetFileName($relative))) { $excluded.secret++; continue }
         $full=[IO.Path]::Combine($Root,$relative)
+        # Windows PowerShell 5.1의 .NET은 260자가 넘는 경로를 열지 못한다. 조용히 빠지지 않게 읽지 못한 파일로 센다.
+        if ($full.Length -ge 260) { $excluded.unreadable++; continue }
         if (-not [IO.File]::Exists($full)) { continue }   # git이 추적하지만 지워진 파일, 하위 모듈 폴더
         if (-not (Test-ProjectLinkFree $full $Root $cache)) { $excluded.link++; continue }
         $size=([IO.FileInfo]::new($full)).Length; $bytes+=$size

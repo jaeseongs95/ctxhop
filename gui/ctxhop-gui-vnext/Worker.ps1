@@ -239,7 +239,7 @@ function Save-ProjectBackup([hashtable]$Plan,[string]$Agent,[string]$SessionId,[
                 $hash=$snapshot.hash; $missed=$snapshot.unreadable.Count; $entry.files=$snapshot.files; $entry.bytes=$snapshot.bytes
                 $found=@($bundles | Where-Object { $_.metadata.historyMode -ceq "project-files;v1;$hash" })
             }
-            $entry.contentHash=$hash; $unreadable+=$missed
+            $entry.contentHash=$hash; $unreadable+=$missed+[int]$entry.list.excluded.unreadable
             if ($found.Count) { $entry.bundleId=$found[0].id; $entry.status='reused' }
             elseif ($snapshot.archiveBytes -gt $script:ProjectMaxArchiveBytes) { $entry.status='skipped'; $entry.reason='tooLarge' }
             else {
@@ -351,14 +351,18 @@ function Invoke-ClaudeProjectJob([object]$Job) {
     # Claude Code 대화의 백업·미리보기·복원에 프로젝트 파일을 덧붙인다. 대화 작업은 ClaudeWorker가 그대로 한다.
     switch ($Job.action) {
         Backup {
-            $plan=$null
+            $plan=$null; $planError=''
             if ($Job.projectBackup -and $Job.projectPath -and (Test-Path -LiteralPath $Job.projectPath -PathType Container)) {
                 Assert-NativeId $Job.nativeId
-                $work=Read-ClaudeWorkData @(Get-ClaudeSessionFiles $Job.nativeId)
-                $plan=Get-ProjectPlan $Job (Normalize-ProjectPath (Resolve-Path -LiteralPath $Job.projectPath).Path) $work.cwds $work.edits
+                # 폴더를 고르다 실패해도 대화 백업은 막지 않고 이유만 덧붙인다.
+                try {
+                    $work=Read-ClaudeWorkData @(Get-ClaudeSessionFiles $Job.nativeId)
+                    $plan=Get-ProjectPlan $Job (Normalize-ProjectPath (Resolve-Path -LiteralPath $Job.projectPath).Path) $work.cwds $work.edits
+                } catch { $planError=$_.Exception.Message }
                 if ($plan.ask.Count) { return (New-ProjectQuestion $plan) }
             }
             $result=& $script:ClaudeJobCore $Job
+            if ($planError) { $result.message+=T 'WkProjectFailed' $planError }
             if ($plan) {
                 $stage=New-DesktopStage
                 try { $result.project=Save-ProjectBackup $plan 'claude-code' $Job.nativeId $Job.remoteId $stage; $result.message+=$result.project.message }
@@ -404,9 +408,9 @@ function Invoke-DesktopJob([object]$Job) {
             Assert-BundleMetadata $export.metadata
             if ($export.metadata.sessionId -cne $Job.nativeId -or -not (Test-Path -LiteralPath $archive -PathType Leaf)) { throw (T 'WkExportResultInvalid') }
             # 프로젝트 폴더가 커서 물어야 하면 대화도 올리지 않고 돌려준다.
-            $plan=$null
+            $plan=$null; $planError=''
             if ($Job.projectBackup) {
-                $plan=Get-ProjectPlan $Job $export.metadata.sourceCwd @($export.folders.cwds) @($export.folders.edits)
+                try { $plan=Get-ProjectPlan $Job $export.metadata.sourceCwd @($export.folders.cwds) @($export.folders.edits) } catch { $planError=$_.Exception.Message }
                 if ($plan.ask.Count) { $null=Remove-DesktopStage $stage; return (New-ProjectQuestion $plan) }
             }
             $metadata=Join-Path $stage 'metadata.json'
@@ -415,7 +419,7 @@ function Invoke-DesktopJob([object]$Job) {
             $bundle=Invoke-Bundle @('put','--input',$archive,'--metadata',$metadata,'--json')
             Assert-BundleId $bundle.id
             # 프로젝트 파일은 대화 백업이 끝난 뒤 올린다. 실패해도 대화 백업은 그대로이고 이유만 덧붙인다.
-            $project=$null; $projectMessage=''
+            $project=$null; $projectMessage=if ($planError) {T 'WkProjectFailed' $planError} else {''}
             if ($plan) {
                 try { $project=Save-ProjectBackup $plan 'codex-desktop' $Job.nativeId $bundle.id $stage; $projectMessage=$project.message }
                 catch { $projectMessage=T 'WkProjectFailed' $_.Exception.Message }

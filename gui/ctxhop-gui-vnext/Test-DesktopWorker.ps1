@@ -242,6 +242,11 @@ try {
         $plain=Invoke-JobCore $codex
         Assert ($null -eq $plain.project -and $script:Store.Count -eq $count+1) 'with the option off only the conversation is uploaded'
         $codex.projectBackup=$true
+        # 폴더를 고르다 실패해도 대화 백업은 그대로 올라가고 이유만 붙는다.
+        $realFolders=${function:Get-ProjectFolders}; $count=$script:Store.Count
+        function Get-ProjectFolders { throw '합성 폴더 실패' }
+        try { $failedPlan=Invoke-JobCore $codex } finally { ${function:Get-ProjectFolders}=$realFolders }
+        Assert ($failedPlan.bundle.id -and $null -eq $failedPlan.project -and $failedPlan.message -match '프로젝트 파일은 백업하지 못했습니다' -and $failedPlan.message -match '합성 폴더 실패' -and $script:Store.Count -eq $count+1) "a failure while picking folders never blocks the Codex conversation backup: $($failedPlan.message)"
 
         # 목록에는 프로젝트 파일과 연결 기록이 대화로 보이지 않는다.
         $listed=Invoke-JobCore @{action='List';agent='codex-desktop';home=$desktopRoot;search=''}
@@ -304,6 +309,10 @@ try {
         Assert ((@($cb.project.folders | ForEach-Object status) -join '|') -eq 'reused|reused' -and $cb.project.outside.Count -eq 1) 'identical folders already backed up for Codex are reused'
         $claudeLink=@(Get-Stored 'project-link;v1;claude-code')
         Assert ($claudeLink.Count -eq 1 -and $claudeLink[0].metadata.title -ceq $claudeRemote -and $claudeLink[0].metadata.sessionId -eq $claudeId) 'the Claude link names the remote ID'
+        $realRead=${function:Read-ClaudeWorkData}
+        function Read-ClaudeWorkData([string[]]$Files) { throw '합성 읽기 실패' }
+        try { $failedRead=Invoke-JobCore $claude } finally { ${function:Read-ClaudeWorkData}=$realRead }
+        Assert ($failedRead.message -match '^대화 백업 완료\. 프로젝트 파일은 백업하지 못했습니다' -and $failedRead.message -match '합성 읽기 실패' -and $script:ClaudeCalls[-1] -eq 'Backup') "a failure while picking folders never blocks the Claude conversation backup: $($failedRead.message)"
         [IO.File]::WriteAllText("$projA\src\app.py",'claude v2'); $null=Invoke-JobCore $claude
         $claudeTarget=Join-Path $testDirectory 'claude-target'; $null=New-Item -ItemType Directory -Path $claudeTarget
         $claude.action='Preview'; $claude.projectPath=$claudeTarget; $claude.projectRestore=$true

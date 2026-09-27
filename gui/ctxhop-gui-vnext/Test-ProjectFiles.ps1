@@ -82,6 +82,8 @@ try {
     $work=Read-ClaudeWorkData @($jsonl)
     Assert (($work.cwds -join '|') -eq 'D:\codex\경력|E:\side') "claude cwds: $($work.cwds -join '|')"
     Assert (($work.edits -join '|') -eq 'D:\codex\경력\a.md|F:\nb\x.ipynb|\\server\share\m.txt') "claude edits: $($work.edits -join '|')"
+    $work=Read-ClaudeWorkData @((Join-Path $testDirectory 'missing.jsonl'),$jsonl)
+    Assert (($work.cwds -join '|') -eq 'D:\codex\경력|E:\side') 'a session file that cannot be opened is skipped, not fatal'
 
     # 4) 백업 안 경로 검사.
     foreach ($good in @('src\a.txt','한글 폴더\메모.txt','.gitignore','a.b\c')) { Assert (Test-ProjectEntryPath $good) "safe path accepted: $good" }
@@ -113,6 +115,11 @@ try {
     Assert ($list.excluded.secret -eq 1) 'secret file excluded even when git would add it'
     $sub=Get-ProjectFileList (Join-Path $repo 'sub')
     Assert ($sub.method -eq 'git' -and (@($sub.files | ForEach-Object path) -join '|') -eq 's.txt') 'a subfolder of a repository lists paths relative to itself'
+    # 260자가 넘는 경로는 .NET이 열지 못하므로 조용히 빼지 않고 읽지 못한 파일로 센다.
+    $realGit=${function:Invoke-ProjectGit}
+    function Invoke-ProjectGit([string]$Root) { return ,[string[]]@('a.txt',(('x'*120)+'\'+('y'*120)+'\long.txt')) }
+    try { $long=Get-ProjectFileList $repo } finally { ${function:Invoke-ProjectGit}=$realGit }
+    Assert ((@($long.files | ForEach-Object path) -join '|') -eq 'a.txt' -and $long.excluded.unreadable -eq 1) "a path over 260 characters is counted as unreadable: $($long.excluded | ConvertTo-Json -Compress)"
 
     # 7) 스냅숏: 만들고 읽으면 같은 내용 해시, 미리 구한 해시와 같고, 내용이 바뀌면 해시가 바뀐다.
     $list=Get-ProjectFileList $walk
