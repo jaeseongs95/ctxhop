@@ -8,8 +8,11 @@
   #error Pass /DTag=<release date tag>, for example /DTag=20260927.1
 #endif
 ; Same command as Run-CtxHop-GUI-vNext.cmd, started minimized so no console window flashes.
-#define PowerShell "{sys}\WindowsPowerShell\v1.0\powershell.exe"
-#define GuiArgs "-NoLogo -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File ""{app}\GUI.ps1"""
+; Setup stays in 32-bit mode like the first release so upgrades keep one uninstall log; the shortcut path is
+; resolved by 64-bit Explorer and the [Run] entry uses the 64bit flag, so both start 64-bit Windows PowerShell.
+#define PowerShell "{win}\System32\WindowsPowerShell\v1.0\powershell.exe"
+; Single quotes keep the doubled quotes that the [Icons]/[Run] parameter syntax needs around the path.
+#define GuiArgs '-NoLogo -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File ""{app}\GUI.ps1""'
 
 [Setup]
 AppId={{2CC6D235-90EE-48E7-9059-3FFC393D8C9E}
@@ -20,7 +23,6 @@ AppPublisherURL=https://github.com/jaeseongs95/ctxhop
 AppUpdatesURL=https://github.com/jaeseongs95/ctxhop/releases
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
 DefaultDirName={autopf}\CtxHop GUI vNext
 ; A fixed folder keeps the install away from the data folder.
 DisableDirPage=yes
@@ -52,7 +54,7 @@ Name: "{autoprograms}\CtxHop GUI vNext"; Filename: "{#PowerShell}"; Parameters: 
 Name: "{autodesktop}\CtxHop GUI vNext"; Filename: "{#PowerShell}"; Parameters: "{#GuiArgs}"; WorkingDir: "{app}"; Flags: runminimized; Tasks: desktopicon
 
 [Run]
-Filename: "{#PowerShell}"; Parameters: "{#GuiArgs}"; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,CtxHop GUI vNext}"; Flags: postinstall nowait skipifsilent runminimized
+Filename: "{#PowerShell}"; Parameters: "{#GuiArgs}"; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,CtxHop GUI vNext}"; Flags: postinstall nowait skipifsilent runminimized 64bit
 
 [UninstallDelete]
 ; Python bytecode cache only; a user-made backend\runtime.json stays.
