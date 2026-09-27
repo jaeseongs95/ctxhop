@@ -752,7 +752,7 @@ try {
         $exe=Join-Path $script:CaseRoot 'fake-ctxhop-utf8.exe'
         Add-Type -OutputAssembly $exe -OutputType ConsoleApplication -TypeDefinition @'
 public static class FakeCtxUtf8 { public static void Main() {
-    byte[] b = System.Text.Encoding.UTF8.GetBytes("{\"title\":\"\uD55C\uAE00 \uC81C\uBAA9\",\"path\":\"D:\\\\codex\\\\\uACBD\uB825\"}");
+    byte[] b = System.Text.Encoding.UTF8.GetBytes("{\"title\":\"\uD55C\uAE00 \uC81C\uBAA9\",\"path\":\"D:\\\\codex\\\\\uBCF4\uACE0\uC11C\"}");
     System.IO.Stream o = System.Console.OpenStandardOutput(); o.Write(b, 0, b.Length); o.Flush(); } }
 '@
         $saved=[Console]::OutputEncoding
@@ -762,7 +762,7 @@ public static class FakeCtxUtf8 { public static void Main() {
                 function Find-Executable([string]$Name) { return $exe }
                 & $script:RealInvokeCtx @('list','--json') -Json
             }
-            Assert ($report.title -eq '한글 제목' -and $report.path -eq 'D:\codex\경력') "Korean text survives: $($report.title) / $($report.path)"
+            Assert ($report.title -eq '한글 제목' -and $report.path -eq 'D:\codex\보고서') "Korean text survives: $($report.title) / $($report.path)"
             Assert ([Console]::OutputEncoding.CodePage -eq 949) 'the console code page is put back after the call'
         } finally { [Console]::OutputEncoding=$saved }
     }

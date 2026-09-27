@@ -795,8 +795,8 @@ class Sessions(unittest.TestCase):
         # 같은 경로는 한 번만, 대화 cwd → 턴마다 바뀐 cwd → 하위 대화 cwd 순으로 처음 본 순서를 지킨다.
         def line(kind, payload):
             return (json.dumps({'type': kind, 'payload': payload}, ensure_ascii=False) + '\n').encode('utf-8')
-        patch = '*** Begin Patch\n*** Update File: D:\\codex\\경력\\a.py\n*** Add File: notes/b.md\n*** End Patch'
-        parent = (line('session_meta', {'id': 'p'}) + line('turn_context', {'cwd': 'D:\\codex\\경력'})
+        patch = '*** Begin Patch\n*** Update File: D:\\codex\\보고서\\a.py\n*** Add File: notes/b.md\n*** End Patch'
+        parent = (line('session_meta', {'id': 'p'}) + line('turn_context', {'cwd': 'D:\\codex\\보고서'})
             + line('turn_context', {'cwd': 'D:\\other'})
             + line('response_item', {'type': 'function_call', 'name': 'shell',
                 'arguments': json.dumps({'command': ['apply_patch', patch]}, ensure_ascii=False)})
@@ -804,10 +804,10 @@ class Sessions(unittest.TestCase):
                 'input': '*** Begin Patch\n*** Delete File: C:\\Users\\me\\Desktop\\x.txt\n*** End Patch'})
             + line('response_item', {'type': 'custom_tool_call', 'name': 'apply_patch', 'input': patch}))
         child = line('session_meta', {'id': 'c'}) + line('turn_context', {'cwd': 'E:\\sub'})
-        family = {'members': [{'data': {'thread': {'cwd': 'D:\\codex\\경력'}}, 'rollout': parent},
+        family = {'members': [{'data': {'thread': {'cwd': 'D:\\codex\\보고서'}}, 'rollout': parent},
             {'data': {'thread': {'cwd': 'E:\\sub'}}, 'rollout': child}]}
-        self.assertEqual(d.work_folders(family), {'cwds': ['D:\\codex\\경력', 'D:\\other', 'E:\\sub'],
-            'edits': ['D:\\codex\\경력\\a.py', 'C:\\Users\\me\\Desktop\\x.txt']})
+        self.assertEqual(d.work_folders(family), {'cwds': ['D:\\codex\\보고서', 'D:\\other', 'E:\\sub'],
+            'edits': ['D:\\codex\\보고서\\a.py', 'C:\\Users\\me\\Desktop\\x.txt']})
 
 
 if __name__ == '__main__':

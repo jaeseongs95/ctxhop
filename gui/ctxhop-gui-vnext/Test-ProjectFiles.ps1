@@ -52,7 +52,7 @@ try {
     $env:GIT_CEILING_DIRECTORIES=$testDirectory
 
     # 1) 경로 정리: \\?\, /, 겹친 \, 끝 \를 정리하고 상대 경로는 버린다.
-    Assert ((ConvertTo-ProjectPath '\\?\D:\codex\\경력\') -eq 'D:\codex\경력') '\\?\ prefix and doubled backslashes are normalized'
+    Assert ((ConvertTo-ProjectPath '\\?\D:\codex\\보고서\') -eq 'D:\codex\보고서') '\\?\ prefix and doubled backslashes are normalized'
     Assert ((ConvertTo-ProjectPath '\\?\UNC\server\share\x') -eq '\\server\share\x') 'long UNC prefix becomes a UNC path'
     Assert ((ConvertTo-ProjectPath 'D:/a/b/') -eq 'D:\a\b') 'forward slashes are normalized'
     Assert ((ConvertTo-ProjectPath 'D:\') -eq 'D:\') 'drive root keeps its backslash'
@@ -77,17 +77,17 @@ try {
     # 3) Claude Code 대화 파일: cwd와 편집 도구의 절대 경로만 모은다.
     $jsonl=Join-Path $testDirectory 'session.jsonl'
     [IO.File]::WriteAllLines($jsonl,[string[]]@(
-        '{"type":"user","cwd":"D:\\codex\\\uacbd\ub825","message":{"content":"hi"}}',
-        '{"type":"assistant","cwd":"D:\\codex\\경력","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"D:\\codex\\경력\\a.md"}},{"type":"tool_use","name":"Read","input":{"file_path":"C:\\read-only.txt"}}]}}',
+        '{"type":"user","cwd":"D:\\codex\\\ubcf4\uace0\uc11c","message":{"content":"hi"}}',
+        '{"type":"assistant","cwd":"D:\\codex\\보고서","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"D:\\codex\\보고서\\a.md"}},{"type":"tool_use","name":"Read","input":{"file_path":"C:\\read-only.txt"}}]}}',
         '{"type":"assistant","cwd":"E:\\side","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"relative.txt"}},{"type":"tool_use","name":"NotebookEdit","input":{"notebook_path":"F:\\nb\\x.ipynb"}}]}}',
         'not json {"cwd":"broken',
         '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"MultiEdit","input":{"file_path":"\\\\server\\share\\m.txt"}}]}}'
     ),[Text.UTF8Encoding]::new($false))
     $work=Read-ClaudeWorkData @($jsonl)
-    Assert (($work.cwds -join '|') -eq 'D:\codex\경력|E:\side') "claude cwds: $($work.cwds -join '|')"
-    Assert (($work.edits -join '|') -eq 'D:\codex\경력\a.md|F:\nb\x.ipynb|\\server\share\m.txt') "claude edits: $($work.edits -join '|')"
+    Assert (($work.cwds -join '|') -eq 'D:\codex\보고서|E:\side') "claude cwds: $($work.cwds -join '|')"
+    Assert (($work.edits -join '|') -eq 'D:\codex\보고서\a.md|F:\nb\x.ipynb|\\server\share\m.txt') "claude edits: $($work.edits -join '|')"
     $work=Read-ClaudeWorkData @((Join-Path $testDirectory 'missing.jsonl'),$jsonl)
-    Assert (($work.cwds -join '|') -eq 'D:\codex\경력|E:\side') 'a session file that cannot be opened is skipped, not fatal'
+    Assert (($work.cwds -join '|') -eq 'D:\codex\보고서|E:\side') 'a session file that cannot be opened is skipped, not fatal'
 
     # 4) 백업 안 경로 검사.
     foreach ($good in @('src\a.txt','한글 폴더\메모.txt','.gitignore','a.b\c','메일\보고(7_25~7_27).eml','2026~2027.txt','a~1.json')) { Assert (Test-ProjectEntryPath $good) "safe path accepted: $good" }
@@ -137,6 +137,22 @@ try {
     $leftover=Join-Path $testDirectory 'leftover'; Write-Fixture $leftover @{'.git\objects\x'='o';'a.txt'='a'}
     $list=Get-ProjectFileList $leftover
     Assert ($list.method -eq 'walk' -and (@($list.files | ForEach-Object path) -join '|') -eq 'a.txt') 'a .git folder without HEAD is not a repository to git either, so the folder is walked'
+    # 충돌이 남은 저장소: git은 충돌 중인 파일을 단계마다 한 줄씩 보여 준다. 한 번만 넣어야 받는 쪽이 복원한다.
+    $conflict=Join-Path $testDirectory 'conflict'; Write-Fixture $conflict @{'f.txt'='base';'other.txt'='o'}
+    $gitArgs=@('-C',$conflict,'-c','user.name=t','-c','user.email=t@example.invalid','-c','commit.gpgsign=false','-c',"core.hooksPath=$(Join-Path $testDirectory 'no-hooks')")
+    & $git -C $conflict init -q; & $git -C $conflict add -A; & $git @gitArgs commit -qm base | Out-Null
+    & $git -C $conflict checkout -qb side; [IO.File]::WriteAllText((Join-Path $conflict 'f.txt'),'side'); & $git @gitArgs commit -qam side | Out-Null
+    & $git -C $conflict checkout -q -; [IO.File]::WriteAllText((Join-Path $conflict 'f.txt'),'main'); & $git @gitArgs commit -qam main | Out-Null
+    & $git @gitArgs merge -q side | Out-Null
+    $list=Get-ProjectFileList $conflict
+    Assert (@(& $git -C $conflict ls-files -u).Count -ge 2 -and (@($list.files | ForEach-Object path) -join '|') -eq 'f.txt|other.txt' -and $list.excluded.unsafe -eq 0) "a file in a merge conflict is listed once: $(@($list.files | ForEach-Object path) -join '|') $($list.excluded | ConvertTo-Json -Compress)"
+    $zipC=Join-Path $testDirectory 'conflict.zip'; $null=New-ProjectSnapshot $list $zipC
+    Assert ((Read-ProjectSnapshot $zipC).files.Count -eq 2) 'the snapshot of a repository in a merge conflict can be read back'
+    # 대소문자만 다른 이름이 인덱스에 함께 있으면 Windows에서는 한 파일이다. 하나만 넣고 나머지는 복원할 수 없는 이름으로 센다.
+    $blob=& $git -C $conflict hash-object -w other.txt; & $git -C $conflict update-index --add --cacheinfo "100644,$blob,OTHER.txt"
+    $list=Get-ProjectFileList $conflict
+    $zipD=Join-Path $testDirectory 'case.zip'; $null=New-ProjectSnapshot $list $zipD
+    Assert ($list.files.Count -eq 2 -and $list.excluded.unsafe -eq 1 -and (Read-ProjectSnapshot $zipD).files.Count -eq 2) "names that differ only in case are kept once: $(@($list.files | ForEach-Object path) -join '|') $($list.excluded | ConvertTo-Json -Compress)"
     $sub=Get-ProjectFileList (Join-Path $repo 'sub')
     Assert ($sub.method -eq 'git' -and (@($sub.files | ForEach-Object path) -join '|') -eq 's.txt') 'a subfolder of a repository lists paths relative to itself'
     # 260자가 넘는 경로는 .NET이 열지 못하므로 조용히 빼지 않고 읽지 못한 파일로 센다.

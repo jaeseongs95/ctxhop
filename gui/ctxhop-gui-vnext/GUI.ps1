@@ -213,9 +213,9 @@ function Select-DeferredBackups([object[]]$Items) {
         return @($ui.list.CheckedItems | ForEach-Object { $_.Tag })
     } finally { $ui.dialog.Dispose() }
 }
-# 고른 대화는 그 큰 폴더를 허락한 채 같은 백업을 다시 실행한다.
+# 고른 대화는 그 큰 폴더를 허락한 채 같은 백업을 다시 실행한다. 다시 물은 경우 앞서 허락한 폴더도 유지한다.
 function Approve-Deferred([object]$Item) {
-    $job=$Item.job.Clone(); $job.projectApproved=@($Item.folders | ForEach-Object { [string]$_.path } | Where-Object { $_ })
+    $job=$Item.job.Clone(); $job.projectApproved=@(@($Item.job.projectApproved) + @($Item.folders | ForEach-Object { [string]$_.path }) | Where-Object { $_ } | Select-Object -Unique)
     return $job
 }
 function Get-ProjectReasonText([string]$Reason) {

@@ -241,6 +241,10 @@ try {
         $large=Invoke-JobCore $codex
         Assert ($large.project.folders[0].status -eq 'skipped' -and $large.project.folders[0].reason -eq 'tooLarge' -and $large.project.folders[1].status -eq 'reused') 'an archive over the limit is skipped with a reason'
         $script:ProjectMaxArchiveBytes=1GB; [IO.File]::WriteAllText("$projA\src\app.py",'v2')
+        # 받는 쪽이 풀지 않는 크기(압축 전 16GiB 초과)는 묻지도 올리지도 않는다(한도를 낮춰 확인: 앱 7바이트, lib 6바이트).
+        $script:ProjectMaxBytes=6
+        try { $huge=Invoke-JobCore $codex } finally { $script:ProjectMaxBytes=16GB }
+        Assert (-not $huge.needsProjectConfirm -and $huge.project.folders[0].status -eq 'skipped' -and $huge.project.folders[0].reason -eq 'tooLarge' -and $huge.project.folders[1].status -eq 'reused') "a folder the receiver would refuse to unpack is not uploaded: $($huge.project.folders | ConvertTo-Json -Compress)"
         $codex.projectBackup=$false; $count=$script:Store.Count
         $plain=Invoke-JobCore $codex
         Assert ($null -eq $plain.project -and $script:Store.Count -eq $count+1) 'with the option off only the conversation is uploaded'

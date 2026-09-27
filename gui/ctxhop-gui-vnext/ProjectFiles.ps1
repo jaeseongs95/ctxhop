@@ -139,6 +139,7 @@ function Invoke-ProjectGit([string]$Root) {
 function Get-ProjectFileList([string]$Root) {
     # 백업할 파일(상대 경로, 크기). Git 저장소면 git 목록, 아니면 폴더를 직접 돌며 생성 폴더를 뺀다. .git·비밀 파일·링크는 늘 뺀다.
     $cache=@{}; $files=[Collections.Generic.List[object]]::new(); $excluded=[ordered]@{secret=0;generated=0;link=0;unreadable=0;unsafe=0}
+    $once=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal); $kept=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $listed=Invoke-ProjectGit $Root
     $method=if ($null -ne $listed) {'git'} else {'walk'}
     if ($null -eq $listed) {
@@ -162,6 +163,7 @@ function Get-ProjectFileList([string]$Root) {
     [long]$bytes=0
     foreach ($relative in $listed) {
         if ($relative.EndsWith('\')) { continue }   # git이 폴더로 보여 주는 안의 저장소. 하위 모듈처럼 내용은 옮기지 않는다.
+        if (-not $once.Add($relative)) { continue }   # 충돌 중인 파일은 git이 단계마다 한 줄씩 보여 준다
         if ($relative.Split('\') -icontains '.git') { continue }
         if (Test-ProjectSecretName ([IO.Path]::GetFileName($relative))) { $excluded.secret++; continue }
         if (-not (Test-ProjectEntryPath $relative)) { $excluded.unsafe++; continue }   # 복원할 때 거부될 이름은 올리지 않는다
@@ -170,6 +172,7 @@ function Get-ProjectFileList([string]$Root) {
         if ($full.Length -ge 260) { $excluded.unreadable++; continue }
         if (-not [IO.File]::Exists($full)) { continue }   # git이 추적하지만 지워진 파일, 하위 모듈 폴더
         if (-not (Test-ProjectLinkFree $full $Root $cache)) { $excluded.link++; continue }
+        if (-not $kept.Add($relative)) { $excluded.unsafe++; continue }   # 대소문자만 다른 이름은 Windows에서 한 파일이고 복원에서 거부된다
         $size=([IO.FileInfo]::new($full)).Length; $bytes+=$size
         $files.Add([pscustomobject]@{path=$relative;full=$full;size=$size})
     }

@@ -254,6 +254,8 @@ try {
         $script:DialogAnswer='Cancel'
         Assert (@(Select-DeferredBackups $items).Count -eq 0) 'closing the list uploads nothing'
     } finally { ${function:Show-Dialog}=$realShowDialog }
+    $again=Approve-Deferred @{job=@{title='다시';projectApproved=@('D:\A')};folders=@(@{path='D:\B'},@{path='D:\A'})}
+    Assert ((@($again.projectApproved) -join '|') -eq 'D:\A|D:\B') "approving again keeps the folders approved before: $(@($again.projectApproved) -join '|')"
     $big=@{ok=$true;data=@{needsProjectConfirm=$true;folders=@(@{path='D:\큰 폴더';files=12;bytes=300MB});message='합성 확인 필요'}}
     function Select-DeferredBackups([object[]]$Items) { $script:AskCount++; $script:Offered=$Items; if ($script:Pick) { return @($Items | Select-Object -Last 1) } else { return @() } }
     foreach ($pick in @($true,$false)) {
@@ -306,7 +308,7 @@ try {
         [pscustomobject]@{index=2;role='extra';sourcePath='D:\원본\큰';target='';state='skipped';reason='tooLarge';compare=$null},
         [pscustomobject]@{index=3;role='extra';sourcePath='D:\원본\깨짐';target='';state='error';reason='합성 읽기 오류';compare=$null})}
     $text=Format-ProjectPreview $found
-    Assert ($text -like '*D:\원본\앱 → D:\이 PC: 새 파일 2개, 바뀔 파일 1개(원본 보관), 같은 파일 5개, 이 PC에만 있는 파일 3개(그대로 둠)*' -and $text -like '*D:\원본\lib: 이 PC에 없는 폴더*' -and $text -like '*D:\원본\큰: 백업하지 않음(압축해도 1GiB가 넘음)*' -and $text -like '*D:\원본\깨짐: 받은 백업을 읽지 못해 복원하지 않음(합성 읽기 오류)*' -and $text -like '*밖에서 고친 파일 1개*') "project preview text: $text"
+    Assert ($text -like '*D:\원본\앱 → D:\이 PC: 새 파일 2개, 바뀔 파일 1개(원본 보관), 같은 파일 5개, 이 PC에만 있는 파일 3개(그대로 둠)*' -and $text -like '*D:\원본\lib: 이 PC에 없는 폴더*' -and $text -like '*D:\원본\큰: 백업하지 않음(압축해도 1GiB가 넘거나 압축 전 16GiB가 넘음)*' -and $text -like '*D:\원본\깨짐: 받은 백업을 읽지 못해 복원하지 않음(합성 읽기 오류)*' -and $text -like '*밖에서 고친 파일 1개*') "project preview text: $text"
     Assert ((Format-ProjectPreview ([pscustomobject]@{state='none'})) -like '*없습니다*' -and (Format-ProjectPreview ([pscustomobject]@{state='error';reason='합성 오류'})) -like '*합성 오류*' -and (Format-ProjectPreview $null) -like '*선택 꺼짐*') 'none, error and off are explained'
     $projectReviews=@(
         [pscustomobject]@{job=@{action='Preview';agent='codex-desktop';nativeId=$id;remoteId=$a;title='프로젝트 있음';sourceCwd='D:\원본\앱';projectPath='D:\이 PC';home='D:\데이터';projectRestore=$true};receipt='fixture-inspect.json';preview=[pscustomobject]@{status='incoming_newer';reason='fixture';token='t-a';source=@{};target=@{}};project=$found},
