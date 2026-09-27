@@ -240,7 +240,7 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 | `bin\ctxhop-claude.exe` (`0.2.0-gui.2`, 대화 옆 폴더, ClaudeWorker 고정) | `15CE00DC32BE07ECF089F5D49154469A4B259E1B7EB0ED0123C0FE57152BFC2B` |
 | `ClaudeWorker.ps1` (안정판 `D08E9A15…`에서 문장을 `Strings.ps1`로 옮기고 언어 적용·실패 이유·겹친 등록 차단·등록 해제·암호 변경/초기화·대화 옆 폴더 복원 추가) | `2B0C34C9402B8A98AA27F0E1468F392FCDD374B60AEDB41E2D0863C4FE550E0F` |
 | `Worker.ps1` (결과 파일 경로 보관 수정, 언어 선택, 하위 대화 수) | `A4C920C6C4E9500045567D4ECC9032D41742DD01E620BAF71A6189F7F6C46CAE` |
-| `GUI.ps1` (언어 선택, 사용성 개선, 폴더 선택 빈 칸 오류 수정, 전체 백업, 프로젝트 필터, 하위 대화 표시) | `41598C0687E60BBA2FF961F7B1103A2103FEE49C3FFF38D1AA5CC96F13A9760B` |
+| `GUI.ps1` (언어 선택, 사용성 개선, 폴더 선택 빈 칸 오류 수정, 전체 백업, 프로젝트 필터, 하위 대화 표시, 페이지 버튼) | `11AE806A7F888BE4C581EBA6862F2F823F99DD5A879EA14475C92027EFF7E813` |
 | `Strings.ps1` (한국어·영어 문장 표) | `0EA6ED281CDA4A5372212AFA3DFC4C0ECE756D8364B6381AEB9E1F2B8080C8C4` |
 
 `transport-source\`와 `bin\ctxhop.exe`는 노트북 세션 결과를 그대로 옮겼습니다. 이 둘의 Go 시험은 다시 실행하지 않았고, 기록된 결과(`transport-source\verification-results\`: 전체 suite 통과, race는 gcc 부재로 미실행)를 근거로 둡니다. `bin\ctxhop-claude.exe`는 이 PC에서 휴대용 Go 1.27.1로 빌드했고, 소스·패치·시험 로그는 `claude-source\`에 있습니다.
