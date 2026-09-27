@@ -92,9 +92,10 @@ function Get-PathKey([string]$Path) {
     return $p.TrimEnd('\')
 }
 # 이 PC 대화는 프로젝트 폴더와 그 하위에서 만든 것만 본다. 공유 백업은 다른 PC 경로일 수 있어 마지막 폴더 이름이 같아도 이 프로젝트로 본다.
-# 원본 폴더를 모르는 행(확인하지 못한 공유 백업)은 숨기지 않는다.
+# 원본 폴더를 모르는 공유 백업(확인하지 못한 백업)은 숨기지 않고, 원본 폴더를 모르는 이 PC 대화는 숨긴다.
 function Test-InProject([object]$Item, [string]$Project) {
-    if (-not $Project -or -not $Item.sourceCwd) { return $true }
+    if (-not $Project) { return $true }
+    if (-not $Item.sourceCwd) { return (-not $Item.local) }
     $root=Get-PathKey $Project; $cwd=Get-PathKey ([string]$Item.sourceCwd)
     if ($cwd -eq $root -or $cwd.StartsWith($root+'\',[StringComparison]::OrdinalIgnoreCase)) { return $true }
     $name=$root.Substring($root.LastIndexOf('\')+1)
@@ -119,13 +120,15 @@ function Apply-Filter {
     $script:Page=[math]::Max(0,[math]::Min($script:Page,$pages-1))
     $grid.SuspendLayout(); $grid.Rows.Clear()
     $visible=@($script:Filtered | Select-Object -Skip ($script:Page*$script:PageSize) -First $script:PageSize)
-    $yes=T 'GuiYes'; $no=T 'GuiNo'; $blocked=T 'GuiBackupBlocked'; $shared=T 'GuiBackupShared'; $none=T 'GuiBackupNone'; $archived=T 'GuiArchivedSuffix'
+    $yes=T 'GuiYes'; $no=T 'GuiNo'; $blocked=T 'GuiBackupBlocked'; $shared=T 'GuiBackupShared'; $none=T 'GuiBackupNone'; $archived=T 'GuiArchivedSuffix'; $oldFormat=T 'GuiOldFormatSuffix'
     foreach ($item in $visible) {
         $title = [regex]::Replace([string]$item.title, '[\x00-\x1f\x7f-\x9f]', ' ')
         $label = if ($item.agent -eq 'codex-desktop') {'Codex Desktop'} else {'Claude Code'}
         $local = if ($item.local) {$yes} else {$no}
         $backup = if ($item.blockedReason) {$blocked} elseif ($item.remoteId -and $item.agent -eq 'codex-desktop') {$shared} elseif ($item.recordCount -gt 0) {$yes} else {$none}
-        $context=if ($item.agent -eq 'codex-desktop') {"$($item.sourceCwd) · $($item.historyMode)" + $(if ($item.archived) {$archived} else {''})} else {''}
+        # 하위 에이전트 대화 수는 부모 행에 붙여 보여 준다. 묶음 표시가 없는 공유 백업은 하위 대화가 빠졌을 수 있는 이전 형식이다.
+        $family=if ($item.blockedReason) {''} elseif ($null -eq $item.children) {$oldFormat} elseif ($item.children -gt 0) {T 'GuiChildrenSuffix' $item.children} else {''}
+        $context=if ($item.agent -eq 'codex-desktop') {"$($item.sourceCwd) · $([string]$item.historyMode -replace ';family=\d+$','')" + $family + $(if ($item.archived) {$archived} else {''})} else {''}
         # Codex 백업은 UTC ISO 문자열이라 이 PC 시간으로 짧게 보여 준다. 정렬은 원래 값으로 한다.
         $updated=[datetime]::MinValue
         $shown=if ([datetime]::TryParse([string]$item.updatedAt,[ref]$updated)) {$updated.ToString('yyyy-MM-dd HH:mm')} else {[string]$item.updatedAt}
@@ -187,6 +190,8 @@ function Finish-Job {
     $projectPicker.Enabled=$true; $desktopHome.ReadOnly=$false
     $progress.Style='Blocks'
     Update-Selection
+    # 전체 백업 요약은 바로 다음 목록 불러오기가 성공할 때만 보여 주고, 실패·취소돼도 남기지 않는다.
+    $bulkSummary=''; if ($pending.job.action -eq 'List') { $bulkSummary=$script:BulkSummary; $script:BulkSummary='' }
     try {
         if ($pending.cancelled) { $script:DesktopPreviewQueue=@(); $status.Text=if ($pending.job.action -eq 'List') {T 'GuiListCancelled'} else {T 'GuiJobCancelled'}; if ($script:Bulk) { $script:Bulk.stop=$true; End-BulkBackup }; return }
         if ($script:Bulk -and $pending.job.action -eq 'Backup') {
@@ -213,7 +218,7 @@ function Finish-Job {
         switch ($pending.job.action) {
             List {
                 Fill-Sessions @($result.data.sessions); if ($result.data.excluded -gt 0) { $status.Text += (T 'GuiExcludedSuffix' $result.data.excluded) }
-                if ($script:BulkSummary) { $status.Text=$script:BulkSummary; $script:BulkSummary='' }
+                if ($bulkSummary) { $status.Text=$bulkSummary }
             }
             Bind { Load-Bindings }
             Unbind { Load-Bindings }
@@ -330,10 +335,11 @@ function Continue-DesktopApply {
     } else { $status.Text=(T 'GuiApplyDone') }
 }
 # 필터에 맞는 이 PC의 Codex 대화를 모든 페이지에서 골라 기존 백업 작업을 하나씩 돌린다.
-# 같은 UUID·같은 수정 시각의 공유 백업이 이미 있으면 내용이 같으므로 다시 올리지 않는다.
+# 같은 UUID·같은 수정 시각의 묶음 형식 공유 백업이 이미 있으면 내용이 같으므로 다시 올리지 않는다.
+# 이전 형식 백업은 하위 대화가 빠졌을 수 있으므로 최신으로 보지 않는다.
 function Start-BulkBackup {
     $latest=@{}
-    foreach ($item in $script:Sessions) { if (-not $item.local -and $item.remoteId -and -not $item.blockedReason) { $latest["$($item.nativeId)|$($item.updatedAt)"]=$true } }
+    foreach ($item in $script:Sessions) { if (-not $item.local -and $item.remoteId -and -not $item.blockedReason -and $null -ne $item.children) { $latest["$($item.nativeId)|$($item.updatedAt)"]=$true } }
     $local=@($script:Filtered | Where-Object { $_.agent -eq 'codex-desktop' -and $_.local })
     $blocked=@($local | Where-Object { $_.blockedReason }).Count
     $ready=@($local | Where-Object { -not $_.blockedReason -and -not $latest.ContainsKey("$($_.nativeId)|$($_.updatedAt)") })
@@ -369,7 +375,7 @@ function End-BulkBackup {
     $status.Text=$summary; $log.AppendText("$summary`r`n")
     if ($bulk.failed.Count) { Show-Error ("$summary`r`n`r`n" + (@($bulk.failed | Select-Object -First 10) -join "`r`n")) }
     # 새 백업이 목록에 보여야 다음 전체 백업이 같은 대화를 다시 올리지 않는다.
-    if ($bulk.done -and -not $script:Pending) { $script:BulkSummary=$summary; Start-Job (Base-Job 'List') }
+    if ($bulk.done -and -not $script:Pending) { Start-Job (Base-Job 'List'); $script:BulkSummary=$summary }
 }
 # 빈 칸·공백·잘못된 문자는 Test-Path가 예외를 내거나 현재 폴더로 풀므로 폴더가 아닌 것으로 본다.
 function Test-Folder([string]$Path) {
