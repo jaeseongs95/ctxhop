@@ -10,7 +10,7 @@ $RequestFile=$script:VNextRequestFile; $ResultFile=$script:VNextResultFile
 $script:ClaudeJobCore=${function:Invoke-JobCore}
 $script:ClaudeFindExecutable=${function:Find-Executable}
 # Release integration replaces these pins only after reviewing the final candidate.
-$script:DesktopBackendSHA256='5B2E3796FBFF5F44DBD20C86363226A95A8027018432898B040E590FABF49A80'
+$script:DesktopBackendSHA256='C1775722000097548E0B6C72BB000D6552F151E17A232BC1FBEA687A2D74881A'
 $script:DesktopTransportSHA256='9B14CCD3B33C75EDFD9D424D76FBAF17092364C58721C1BB9C0FD6BA73C7C006'
 function Find-Executable([string]$Name) {
     if ($Name -eq 'ctxhop') { return (Join-Path $PSScriptRoot 'bin\ctxhop-claude.exe') }
