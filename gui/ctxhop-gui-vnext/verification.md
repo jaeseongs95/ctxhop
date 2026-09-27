@@ -337,6 +337,7 @@
     - gui.3으로 `init`을 하고 복사본으로 `remote relocate`를 했습니다. 설정의 경로와 지문이 바뀌고 기기는 그대로였으며, `status`의 연결은 `bound`였습니다.
     - 전송 `bin\ctxhop.exe`(`20260927.5`와 같은 파일)가 옮긴 설정으로 목록을 읽었습니다.
     - 경로만 손으로 되돌린 설정은 전송도 거부했습니다. 저장소가 없는 폴더로 옮기기도 거부됐습니다.
+    - 공개하는 패키지의 두 실행 파일로 다시 돌려 같은 결과를 얻었습니다.
   - `Test-ClaudeWorker`(49 groups·828)는 다음을 확인합니다.
     - 빠진 파일만 복사(복사 2·같음 1). 연결은 `remote relocate`로만 바뀌고 옛 저장소는 그대로.
     - 내용이 다른 파일이 있으면 아무것도 복사하지 않고 멈춤. 같은 폴더·안에 든 폴더·없는 폴더·S3는 거부하고 ctxhop도 부르지 않음.
@@ -410,7 +411,7 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 저장소 옮기기를 넣고 첫 독립 감사 지적(R15-01 링크·실제 위치·설정 폴더 확인, R15-02 칸 다시 읽기)을 고친 뒤 7개를 같은 명령(`RemoteSigned`)으로 다시 실행했고 모두 종료 코드 0이었습니다: `Test-Strings` 1768, `Test-ProjectFiles` 145, `Test-DesktopWorker` 201, `Test-DesktopGUI` 80, `Test-ClaudeGUI` 165, `Test-ClaudeWorker` 49 groups·828 assertions, `Test-DesktopIntegration` 49.
 - 백엔드는 바꾸지 않아 백엔드 시험은 다시 돌리지 않았습니다(위 결과).
 - 실제 `Worker.ps1`과 실행 파일로 두 PC를 흉내 낸 흐름(18개 검사)도 통과했습니다: PC1이 A→B로 옮기고, 아직 A를 쓰는 PC2가 실제 번들을 올립니다. PC2가 다른 연결의 저장소로 옮기려 하면 아무것도 복사하지 않고 거부됩니다. PC2가 A→B로 옮기면(복사 2·같음 1) 두 PC가 B에서 그 번들을 목록으로 보고 내려받습니다.
-- 원시 로그는 작업 PC의 임시 폴더에만 있습니다(`logs-s4`, `mutants-r16-cw2.out`, `mutants-r16-gui.out`, `mutants-go-r15b.out`, `relocate-int-1`, `worker-move-e2e-r16b.log`).
+- 원시 로그는 작업 PC의 임시 폴더에만 있습니다(`logs-s4`, `mutants-r16-cw2.out`, `mutants-r16-gui.out`, `mutants-go-r15b.out`, `relocate-int-1`, `worker-move-e2e-r16b.log`, `relocate-int-r22.log`, `installer-tests-r22b.log`, `wizard-r22-korean.log`, `wizard-r22-english.log`).
 
 - 전송(`bin\ctxhop.exe`)은 PowerShell 테스트에서 mock이고, 성공 경로의 mock은 bundle 메타데이터 규칙(정확한 7개 필드, BOM 없음, NUL·줄바꿈 없음)을 확인합니다.
 - `backend\test_guard_shim.py`는 시험 전용이며 앱 종료 검사와 엔진 버전 조회만 바꿉니다(엔진은 환경변수 값). Worker·GUI는 이 파일을 호출하지 않습니다. `Test-DesktopIntegration.ps1`의 성공 경로를 다른 PC에서도 다시 돌릴 수 있도록 패키지에 남겨 두었습니다.
@@ -457,6 +458,12 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 - 앱 목록 버전은 `2026.09.27.5`, 제거 프로그램은 `unins000` 하나였고, 패키지 파일 840개(`ProjectFiles.ps1`, `Test-ProjectFiles.ps1` 추가)가 해시까지 같았습니다.
 - 설치된 복사본의 시험 7개(1707 / 145 / 201 / 80 / 125 / 47 groups·774 / 49), 작업 중 설치·제거 대기, 제거, 인터넷 출처 표시, 설치 마법사(한국어·English)를 한 번에 통과했습니다. 마법사 뒤 실행한 GUI에는 **작업 폴더 파일도 함께 백업·복원**이 켜진 채 보였습니다.
 - 공개하는 설치 파일과 zip의 패키지는 시험한 빌드의 패키지와 문서(`README.md`, `README.en.md`, 이 문서)만 다릅니다. 시험한 설치 파일은 실제 설치본을 건드리지 않도록 AppId와 이름만 바꾼 시험용 빌드입니다.
+
+저장소 옮기기 판(`20260927.6`)은 `.5` 시험용 빌드 위에 덮어 설치해 시험했습니다.
+
+- 앱 목록 버전은 `2026.09.27.6`이었고, 패키지 파일 846개가 해시까지 같았으며, 더해진 파일은 제거 프로그램(`unins000`)과 기존 `backend\runtime.json`뿐이었습니다.
+- 설치된 복사본의 시험 7개(1768 / 145 / 201 / 80 / 165 / 49 groups·828 / 49), 작업 중 설치·제거 대기, 제거, 인터넷 출처 표시, 설치 마법사(한국어·English)를 통과했습니다.
+- 공개하는 설치 파일과 zip의 패키지는 시험한 빌드의 패키지와 이 문서만 다릅니다. 시험한 설치 파일은 AppId와 이름만 바꾼 시험용 빌드입니다.
 
 설치 파일은 서명이 없어 SmartScreen 경고가 뜰 수 있으며, 실제 SmartScreen 창과 다른 PC 설치는 확인하지 않았습니다.
 
