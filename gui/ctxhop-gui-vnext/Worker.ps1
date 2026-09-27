@@ -209,9 +209,9 @@ function Get-ProjectPlan([object]$Job,[string]$Start,[string[]]$Cwds,[string[]]$
         else {
             try {
                 $entry.list=Get-ProjectFileList $folder.path; $entry.files=$entry.list.files.Count; $entry.bytes=$entry.list.bytes; $entry.status='pending'
-                # 받는 쪽은 압축 전 16GiB가 넘는 백업을 풀지 않으므로 묻지도 올리지도 않는다.
-                if ($entry.bytes -gt $script:ProjectMaxBytes) { $entry.status='skipped'; $entry.reason='tooLarge' }
-                elseif ($entry.bytes -ge $script:ProjectAskBytes -and $approved -inotcontains $folder.path) { $ask+=[pscustomobject]@{path=$folder.path;files=$entry.files;bytes=$entry.bytes} }
+                # 200MB 이상은 먼저 대화째 보류해 묻는다. 고른 뒤에도 압축 전 16GiB가 넘으면 받는 쪽이 풀지 않으므로 그 폴더만 뺀다.
+                if ($entry.bytes -ge $script:ProjectAskBytes -and $approved -inotcontains $folder.path) { $ask+=[pscustomobject]@{path=$folder.path;files=$entry.files;bytes=$entry.bytes} }
+                elseif ($entry.bytes -gt $script:ProjectMaxBytes) { $entry.status='skipped'; $entry.reason='tooLarge' }
             } catch { $entry.reason=$_.Exception.Message }
         }
         $folders+=,$entry

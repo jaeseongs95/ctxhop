@@ -139,6 +139,8 @@ function Invoke-ProjectGit([string]$Root) {
 function Get-ProjectFileList([string]$Root) {
     # 백업할 파일(상대 경로, 크기). Git 저장소면 git 목록, 아니면 폴더를 직접 돌며 생성 폴더를 뺀다. .git·비밀 파일·링크는 늘 뺀다.
     $cache=@{}; $files=[Collections.Generic.List[object]]::new(); $excluded=[ordered]@{secret=0;generated=0;link=0;unreadable=0;unsafe=0}
+    # 폴더 자체나 위 폴더가 링크·정션이면 실제로 읽는 곳을 알 수 없으므로(설정 폴더 별칭 등) 폴더째 뺀다.
+    if (-not (Test-ProjectLinkFree $Root ([IO.Path]::GetPathRoot($Root)) $cache)) { throw (T 'PfRootLinked' $Root) }
     $once=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal); $kept=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $listed=Invoke-ProjectGit $Root
     $method=if ($null -ne $listed) {'git'} else {'walk'}
@@ -286,8 +288,10 @@ function Restore-ProjectSnapshot([string]$ZipPath, [string]$Target, [string]$Rec
     # 새 파일은 쓰고, 바뀐 파일은 원본을 $Recovery에 복사한 뒤 덮어쓴다. 지우는 파일은 없다. 쓰기 전에 모든 경로를 검사한다.
     $snapshot=Read-ProjectSnapshot $ZipPath
     $root=ConvertTo-ProjectPath $Target
-    if (-not $root -or (Test-ProjectTooBroad $root) -or (Test-ProjectUnder $root (Get-ProjectIgnoredRoots).settings)) { throw (T 'PfTargetUnsafe' $Target) }
     $cache=@{}
+    if (-not $root -or (Test-ProjectTooBroad $root) -or (Test-ProjectUnder $root (Get-ProjectIgnoredRoots).settings)) { throw (T 'PfTargetUnsafe' $Target) }
+    # 복원 폴더 자체나 위 폴더가 링크·정션이면 문자열로 본 경계 밖에 쓸 수 있으므로 거부한다.
+    if (-not (Test-ProjectLinkFree $root ([IO.Path]::GetPathRoot($root)) $cache)) { throw (T 'PfTargetUnsafe' $Target) }
     foreach ($file in $snapshot.files) {
         $full=[IO.Path]::GetFullPath((Join-Path $root $file.path))
         if (-not (Test-ProjectInside $full $root) -or $full -ieq $root -or -not (Test-ProjectLinkFree $full $root $cache)) { throw (T 'PfTargetUnsafe' $full) }

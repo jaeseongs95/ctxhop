@@ -337,6 +337,7 @@ $script:StringTable=@{
     CwConsoleHint=@('암호 입력이 필요하면 이 창에서 입력하세요. 완료 결과는 GUI에 표시됩니다.','If a password is needed, enter it in this window. The result will appear in the GUI.')
     # ProjectFiles.ps1
     PfGitFailed=@('{0}은 Git 저장소인데 git 목록을 읽지 못해(git 없음 또는 오류) .gitignore를 지킬 수 없으므로 프로젝트 백업에서 뺐습니다: {1}','{0} is a Git repository, but its git file list could not be read (git missing or failed), so .gitignore cannot be honored and it was left out of the project backup: {1}')
+    PfRootLinked=@('{0}은 링크나 정션이거나 그 아래에 있어 실제 위치를 확인할 수 없으므로 프로젝트 백업에서 뺐습니다.','{0} is a link or junction, or is under one, so its real location cannot be checked and it was left out of the project backup.')
     PfTooManyFiles=@('{0} 폴더의 파일이 {1}개를 넘어 프로젝트 백업에서 뺐습니다.','{0} has more than {1} files, so it was left out of the project backup.')
     PfArchiveInvalid=@('프로젝트 백업 파일의 형식이 올바르지 않습니다({0}). 아무 파일도 쓰지 않았습니다.','The project backup file is malformed ({0}). No files were written.')
     PfEntryUnsafe=@('프로젝트 백업에 쓸 수 없는 경로가 있습니다: {0}. 아무 파일도 쓰지 않았습니다.','The project backup contains a path that cannot be written: {0}. No files were written.')

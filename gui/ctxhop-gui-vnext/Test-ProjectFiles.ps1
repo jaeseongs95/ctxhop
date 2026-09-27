@@ -7,7 +7,7 @@ $script:Checks=0
 function Assert([bool]$Value,[string]$Message) { $script:Checks++; if (-not $Value) { throw "ASSERT: $Message" } }
 function Throws([scriptblock]$Body,[string]$Pattern) {
     $errorRecord=$null; try { & $Body | Out-Null } catch { $errorRecord=$_ }
-    Assert ($null -ne $errorRecord) 'operation must fail'
+    Assert ($null -ne $errorRecord) "operation must fail: $Body"
     Assert ($errorRecord.Exception.Message -match $Pattern) "expected $Pattern, got $($errorRecord.Exception.Message)"
 }
 function Write-Fixture([string]$Root,[hashtable]$Files) {
@@ -38,6 +38,7 @@ function New-TestZip([string]$Path,[hashtable]$Files,[scriptblock]$Tamper) {
     } finally { $zip.Dispose() }
     return $Path
 }
+function Read-Text([string]$Path) { if ([IO.File]::Exists($Path)) { [IO.File]::ReadAllText($Path) } }   # 없는 파일은 $null(검사가 예외 대신 ASSERT로 실패하도록)
 function Get-TreeText([string]$Root) {
     # 폴더 안 모든 파일의 상대 경로와 내용(비교용).
     (@(Get-ChildItem -LiteralPath $Root -Recurse -Force -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($Root.Length)+'='+[IO.File]::ReadAllText($_.FullName) })) -join "`n"
@@ -190,8 +191,8 @@ try {
     $restored=Restore-ProjectSnapshot $zipA $target $recovery
     Assert ($restored.written -eq 2 -and $restored.backedUp -eq 1 -and $restored.same -eq 1 -and $restored.failed.Count -eq 0) "restore counts: $($restored | ConvertTo-Json -Compress)"
     Assert ([IO.File]::ReadAllText((Join-Path $target 'src\main.py')) -eq 'print(1)' -and [IO.File]::ReadAllText((Join-Path $target '한글 폴더\메모.txt')) -eq '메모') 'restored content matches the backup'
-    Assert ([IO.File]::ReadAllText((Join-Path $recovery 'src\main.py')) -eq 'print(2)') 'the replaced original is in the recovery folder'
-    Assert ([IO.File]::ReadAllText((Join-Path $target 'local-only.txt')) -eq 'keep' -and [IO.File]::ReadAllText((Join-Path $target '.env')) -eq 'LOCAL=1') 'files only on this PC are kept'
+    Assert ((Read-Text (Join-Path $recovery 'src\main.py')) -eq 'print(2)') 'the replaced original is in the recovery folder'
+    Assert ((Read-Text (Join-Path $target 'local-only.txt')) -eq 'keep' -and (Read-Text (Join-Path $target '.env')) -eq 'LOCAL=1') 'files only on this PC are kept'
     Assert (-not @(Get-ChildItem -LiteralPath $target -Recurse -Force -Filter '*.part').Count) 'no temporary part files remain'
     $again=Compare-ProjectSnapshot $read $target
     Assert ($again.new -eq 0 -and $again.changed -eq 0 -and $again.same -eq 3) 'a second compare finds everything the same'
@@ -232,10 +233,26 @@ try {
     Throws { Restore-ProjectSnapshot $viaLink $victim (Join-Path $testDirectory 'rec-link') } '링크나 정션'
     Assert ([IO.File]::ReadAllText((Join-Path $outsideDir 'secret.txt')) -eq 'outside') 'a junction inside the target is not written through'
     Throws { Restore-ProjectSnapshot $zipA ([IO.Path]::GetPathRoot($testDirectory)) (Join-Path $testDirectory 'rec-root') } '링크나 정션'
+    # 프로젝트 폴더 자체나 위 폴더가 정션이면 실제 위치를 믿을 수 없으므로 백업하지도, 그곳에 복원하지도 않는다.
+    $realDir=Join-Path $testDirectory 'real'; Write-Fixture $realDir @{'r.txt'='real';'child\c.txt'='child'}
+    $alias=Join-Path $testDirectory 'alias'; $null=New-Item -ItemType Junction -Path $alias -Target $realDir
+    Throws { Get-ProjectFileList $alias } '링크나 정션'
+    Throws { Get-ProjectFileList (Join-Path $alias 'child') } '링크나 정션'
+    $realBefore=Get-TreeText $realDir
+    Throws { Restore-ProjectSnapshot $zipA $alias (Join-Path $testDirectory 'rec-alias') } '링크나 정션'
+    Throws { Restore-ProjectSnapshot $zipA (Join-Path $alias 'child\new') (Join-Path $testDirectory 'rec-alias-child') } '링크나 정션'
+    Assert ((Get-TreeText $realDir) -eq $realBefore -and -not (Test-Path -LiteralPath (Join-Path $testDirectory 'rec-alias')) -and -not (Test-Path -LiteralPath (Join-Path $testDirectory 'rec-alias-child'))) 'nothing is read or written through a junction at or above the project folder'
     $env:USERPROFILE=Join-Path $testDirectory 'home'
     try {
         Throws { Restore-ProjectSnapshot $zipA (Join-Path $env:USERPROFILE '.claude\projects\x') (Join-Path $testDirectory 'rec-settings') } '링크나 정션'
         Assert (-not (Test-Path -LiteralPath $env:USERPROFILE) -and -not (Test-Path -LiteralPath (Join-Path $testDirectory 'rec-settings'))) 'an agent settings folder is never a restore target'
+        # 설정 폴더를 가리키는 별칭도 폴더 이름 검사를 피하지 못한다.
+        $settingsDir=Join-Path $env:USERPROFILE '.claude'; Write-Fixture $settingsDir @{'settings.json'='{}'}
+        $settingsAlias=Join-Path $testDirectory 'settings-alias'; $null=New-Item -ItemType Junction -Path $settingsAlias -Target $settingsDir
+        $settingsBefore=Get-TreeText $settingsDir
+        Throws { Get-ProjectFileList $settingsAlias } '링크나 정션'
+        Throws { Restore-ProjectSnapshot $zipA $settingsAlias (Join-Path $testDirectory 'rec-settings-alias') } '링크나 정션'
+        Assert ((Get-TreeText $settingsDir) -eq $settingsBefore) 'an alias of an agent settings folder is neither backed up nor written'
     } finally { $env:USERPROFILE=$oldProfile }
 
     # 10) 영어 문장.

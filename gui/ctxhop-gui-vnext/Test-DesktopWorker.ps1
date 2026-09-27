@@ -241,9 +241,14 @@ try {
         $large=Invoke-JobCore $codex
         Assert ($large.project.folders[0].status -eq 'skipped' -and $large.project.folders[0].reason -eq 'tooLarge' -and $large.project.folders[1].status -eq 'reused') 'an archive over the limit is skipped with a reason'
         $script:ProjectMaxArchiveBytes=1GB; [IO.File]::WriteAllText("$projA\src\app.py",'v2')
-        # 받는 쪽이 풀지 않는 크기(압축 전 16GiB 초과)는 묻지도 올리지도 않는다(한도를 낮춰 확인: 앱 7바이트, lib 6바이트).
-        $script:ProjectMaxBytes=6
-        try { $huge=Invoke-JobCore $codex } finally { $script:ProjectMaxBytes=16GB }
+        # 받는 쪽이 풀지 않는 크기(압축 전 16GiB 초과)도 먼저 대화째 보류해 묻고, 고른 뒤에 그 폴더만 뺀다(한도를 낮춰 확인: 앱 7바이트, lib 6바이트).
+        $script:ProjectMaxBytes=6; $script:ProjectAskBytes=1; $count=$script:Store.Count
+        try {
+            $held=Invoke-JobCore $codex
+            Assert ($held.needsProjectConfirm -and (@($held.folders | ForEach-Object path) -join '|') -eq "$projA|$projB" -and $script:Store.Count -eq $count -and (Test-StagingClean)) 'a folder over the receive limit is still held for the user first, and nothing is uploaded'
+            $codex.projectApproved=@($projA,$projB)
+            $huge=Invoke-JobCore $codex
+        } finally { $script:ProjectMaxBytes=16GB; $script:ProjectAskBytes=200MB; $codex.Remove('projectApproved') }
         Assert (-not $huge.needsProjectConfirm -and $huge.project.folders[0].status -eq 'skipped' -and $huge.project.folders[0].reason -eq 'tooLarge' -and $huge.project.folders[1].status -eq 'reused') "a folder the receiver would refuse to unpack is not uploaded: $($huge.project.folders | ConvertTo-Json -Compress)"
         $codex.projectBackup=$false; $count=$script:Store.Count
         $plain=Invoke-JobCore $codex
@@ -267,7 +272,7 @@ try {
         $storedB=@(Get-Stored 'project-files;*' | Where-Object { $_.metadata.sourceCwd -eq $projB })[0].file; $bytesB=[IO.File]::ReadAllBytes($storedB)
         [IO.File]::WriteAllText($storedB,'not a zip')
         try { $iso=Invoke-JobCore $restore } finally { [IO.File]::WriteAllBytes($storedB,$bytesB) }
-        Assert ($iso.preview.token -and $iso.project.folders[0].state -eq 'ready' -and $iso.project.folders[1].state -eq 'error' -and $iso.project.folders[1].reason -and $iso.project.folders[1].target -eq '' -and $iso.project.folders[2].state -eq 'skipped') "one unreadable folder does not stop the others: $($iso.project.folders | ConvertTo-Json -Depth 2 -Compress)"
+        Assert ($iso.preview.token -and @($iso.project.folders).Count -eq 3 -and $iso.project.folders[0].state -eq 'ready' -and $iso.project.folders[1].state -eq 'error' -and $iso.project.folders[1].reason -and $iso.project.folders[1].target -eq '' -and $iso.project.folders[2].state -eq 'skipped') "one unreadable folder does not stop the others: $($iso.project | ConvertTo-Json -Depth 3 -Compress)"
         $null=Remove-DesktopStage (Split-Path -Parent $iso.receipt)
         $shown=Invoke-JobCore $restore
         $p=$shown.project
@@ -312,9 +317,10 @@ try {
         $script:ClaudeCalls=@()
         $script:ClaudeJobCore={ param($Job) $script:ClaudeCalls+=$Job.action; switch ($Job.action) { Backup {@{message='대화 백업 완료.'}} Preview {@{message='미리보기 완료.';preview=@{session=$Job.nativeId}}} Restore {@{message='복원 완료.';restored=@{session=$Job.nativeId}}} } }
         $claude=@{action='Backup';agent='claude-code';projectPath=$projA;nativeId=$claudeId;remoteId=$claudeRemote;projectBackup=$true}
-        $script:ProjectAskBytes=1
-        $ask=Invoke-JobCore $claude
-        Assert ($ask.needsProjectConfirm -and -not $script:ClaudeCalls.Count) 'Claude backup asks before the conversation is pushed'
+        # 받는 쪽 한도(압축 전 16GiB)를 넘는 폴더도 올리기 전에 묻는다(한도를 낮춰 확인).
+        $script:ProjectAskBytes=1; $script:ProjectMaxBytes=6
+        try { $ask=Invoke-JobCore $claude } finally { $script:ProjectMaxBytes=16GB }
+        Assert ($ask.needsProjectConfirm -and (@($ask.folders | ForEach-Object path) -join '|') -eq "$projA|$projB" -and -not $script:ClaudeCalls.Count) 'Claude backup asks before the conversation is pushed, even for a folder over the receive limit'
         $script:ProjectAskBytes=200MB
         $cb=Invoke-JobCore $claude
         Assert (($script:ClaudeCalls -join ',') -eq 'Backup' -and $cb.message -match '^대화 백업 완료\. 프로젝트 폴더 2개' -and (@($cb.project.folders | ForEach-Object { "$($_.role):$($_.sourcePath)" }) -join '|') -eq "start:$projA|extra:$projB") "Claude backup covers the subagent folder: $($cb.message)"
