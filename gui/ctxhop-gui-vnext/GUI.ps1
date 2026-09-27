@@ -185,20 +185,42 @@ function Start-Job([hashtable]$Job) {
     $status.Text=if ($windowStyle -eq 'Hidden') {T 'GuiStatusProcessingHidden'} else {T 'GuiStatusProcessingWindow'}
     $log.AppendText("`r`n$(T 'GuiLogJobStarted' $Job.action $Job.agent)`r`n")
 }
-function Ask-Choice([string]$Message) { return [string][Windows.Forms.MessageBox]::Show($form,$Message,(T 'GuiConfirmTitle'),'YesNoCancel','Question') }
-# 큰 작업 폴더: 예는 함께 백업, 아니요는 그 폴더만 빼고 백업, 취소는 이번 백업 취소($null). 답은 다시 실행할 작업에 넣는다.
-function Resolve-ProjectAsk([hashtable]$Job,[object[]]$Folders) {
-    $lines=@($Folders | ForEach-Object { T 'GuiProjectAskLine' $_.path $_.files ([math]::Ceiling([double]$_.bytes/1MB)) })
-    $answer=Ask-Choice (T 'GuiProjectAskSize' "`r`n" ($lines -join "`r`n"))
-    if ($answer -notin @('Yes','No')) { return $null }
-    $key=if ($answer -eq 'Yes') {'projectApproved'} else {'projectDeclined'}
-    $Job[$key]=@(@($Job[$key]) + @($Folders | ForEach-Object { [string]$_.path }) | Where-Object { $_ })
-    return $Job
+# 큰 작업 폴더(200MB 이상)가 있는 대화는 대화도 올리지 않고 보류한다. 백업이 끝나면 한 창에 모아 체크한 대화만 대화와 파일을 함께 올린다.
+# 항목은 @{job=백업 작업; folders=Worker가 돌려준 큰 폴더}. 기본은 모두 체크하지 않음.
+function New-DeferredDialog([object[]]$Items) {
+    $dialog=[Windows.Forms.Form]::new(); $dialog.Text=(T 'GuiDeferredTitle'); $dialog.ClientSize=[Drawing.Size]::new(900,400)
+    $dialog.StartPosition='CenterParent'; $dialog.Font=[Drawing.Font]::new('맑은 고딕',10); $dialog.MinimumSize=[Drawing.Size]::new(700,300)
+    $dialog.FormBorderStyle='Sizable'; $dialog.MinimizeBox=$false
+    $intro=New-Control Label 16 12 868 46 (T 'GuiDeferredIntro' @($Items).Count) $dialog; $intro.Anchor='Top,Left,Right'
+    $list=New-Control ListView 16 62 868 270 '' $dialog; $list.Anchor='Top,Bottom,Left,Right'
+    $list.View='Details'; $list.CheckBoxes=$true; $list.FullRowSelect=$true
+    $null=$list.Columns.Add((T 'GuiColConversation'),260); $null=$list.Columns.Add((T 'GuiDeferredColFolders'),580)
+    foreach ($item in $Items) {
+        $row=[Windows.Forms.ListViewItem]::new([string]$item.job.title)
+        $null=$row.SubItems.Add((@($item.folders | ForEach-Object { T 'GuiProjectAskLine' $_.path $_.files ([math]::Ceiling([double]$_.bytes/1MB)) }) -join '; '))
+        $row.Tag=$item; $null=$list.Items.Add($row)
+    }
+    $accept=New-Control Button 504 346 220 38 (T 'GuiDeferredUpload') $dialog; $accept.DialogResult='OK'; $accept.Anchor='Bottom,Right'
+    $cancel=New-Control Button 734 346 150 38 (T 'GuiDeferredSkip') $dialog; $cancel.DialogResult='Cancel'; $cancel.Anchor='Bottom,Right'
+    $dialog.CancelButton=$cancel
+    return @{dialog=$dialog;list=$list}
+}
+# 체크한 항목만 돌려준다. 창을 닫거나 올리지 않음을 누르면 없음.
+function Select-DeferredBackups([object[]]$Items) {
+    $ui=New-DeferredDialog $Items
+    try {
+        if ((Show-Dialog $ui.dialog) -ne 'OK') { return @() }
+        return @($ui.list.CheckedItems | ForEach-Object { $_.Tag })
+    } finally { $ui.dialog.Dispose() }
+}
+# 고른 대화는 그 큰 폴더를 허락한 채 같은 백업을 다시 실행한다.
+function Approve-Deferred([object]$Item) {
+    $job=$Item.job.Clone(); $job.projectApproved=@($Item.folders | ForEach-Object { [string]$_.path } | Where-Object { $_ })
+    return $job
 }
 function Get-ProjectReasonText([string]$Reason) {
     switch ($Reason) {
         'missing' { return (T 'GuiProjectReasonMissing') }
-        'declined' { return (T 'GuiProjectReasonDeclined') }
         'tooLarge' { return (T 'GuiProjectReasonTooLarge') }
         'tooBroad' { return (T 'GuiProjectReasonTooBroad') }
         'parentOfStart' { return (T 'GuiProjectReasonParentOfStart') }
@@ -216,6 +238,7 @@ function Format-ProjectPreview([object]$Project) {
                 $lines+=switch ([string]$folder.state) {
                     'ready' { T 'GuiProjectFolderReady' $folder.sourcePath $folder.target $folder.compare.new $folder.compare.changed $folder.compare.same $folder.compare.localOnly }
                     'needsFolder' { T 'GuiProjectFolderNeeds' $folder.sourcePath }
+                    'error' { T 'GuiProjectFolderError' $folder.sourcePath $folder.reason }
                     default { T 'GuiProjectFolderSkipped' $folder.sourcePath (Get-ProjectReasonText $folder.reason) }
                 }
             }
@@ -230,7 +253,7 @@ function Format-ProjectPreview([object]$Project) {
 }
 function Format-ProjectCell([object]$Project) {
     switch ([string]$Project.state) {
-        'found' { return (T 'GuiProjectCell' @($Project.folders | Where-Object { $_.state -ne 'skipped' }).Count (Get-ProjectSum $Project 'new') (Get-ProjectSum $Project 'changed') @($Project.folders | Where-Object { $_.state -eq 'needsFolder' }).Count) }
+        'found' { return (T 'GuiProjectCell' @($Project.folders | Where-Object { $_.state -in @('ready','needsFolder') }).Count (Get-ProjectSum $Project 'new') (Get-ProjectSum $Project 'changed') @($Project.folders | Where-Object { $_.state -eq 'needsFolder' }).Count) }
         'none' { return (T 'GuiProjectCellNone') }
         'error' { return (T 'GuiProjectCellError') }
         default { return (T 'GuiProjectCellOff') }
@@ -302,10 +325,10 @@ function Finish-Job {
                 $log.AppendText("$(T 'GuiStatusLog' $result.data.device $result.data.store $result.data.syncConfig)`r`n")
             }
             Backup {
-                # 큰 작업 폴더를 물어야 하면 아직 아무것도 올리지 않았다. 답을 넣어 같은 백업을 다시 실행한다.
+                # 큰 작업 폴더가 있으면 아직 아무것도 올리지 않았다. 목록 창에서 고르면 대화와 파일을 함께 올린다.
                 if ($result.data.needsProjectConfirm) {
-                    $job=Resolve-ProjectAsk $pending.job @($result.data.folders)
-                    if ($job) { Start-Job $job } else { $status.Text=(T 'GuiProjectBackupCancelled'); $log.AppendText("$(T 'GuiProjectBackupCancelled')`r`n") }
+                    $picked=@(Select-DeferredBackups @(@{job=$pending.job;folders=@($result.data.folders)}))
+                    if ($picked.Count) { Start-Job (Approve-Deferred $picked[0]) } else { $status.Text=(T 'GuiDeferredNotUploaded'); $log.AppendText("$(T 'GuiDeferredNotUploaded')`r`n") }
                 } else { Write-ProjectLog $result.data.project }
             }
             Preview {
@@ -438,26 +461,39 @@ function Start-BulkBackup {
     $current=$local.Count-$blocked-$ready.Count
     if (-not $ready.Count) { throw (T 'GuiBulkNothing' $local.Count $current $blocked) }
     if (-not (Confirm (T 'GuiBulkConfirm' $ready.Count $current $blocked "`r`n"))) { return }
-    $script:Bulk=@{items=$ready;next=0;done=0;failed=@();busy=@();streak=0;stop=$false;skipped=$current+$blocked;approved=@();declined=@()}
+    # deferred: 큰 작업 폴더 때문에 보류한 대화, picked: 끝에 고른 대화 수(-1은 아직 묻지 않음).
+    $script:Bulk=@{items=$ready;next=0;done=0;failed=@();busy=@();streak=0;stop=$false;skipped=$current+$blocked;deferred=@();picked=-1}
     Continue-BulkBackup
 }
 function Continue-BulkBackup {
     $bulk=$script:Bulk
     # 저장소에 쓸 수 없는 경우처럼 모든 대화가 같은 이유로 실패하면 연속 3번 실패한 뒤 멈춘다.
-    if ($bulk.stop -or $bulk.streak -ge 3 -or $bulk.next -ge $bulk.items.Count) { End-BulkBackup; return }
+    if ($bulk.stop -or $bulk.streak -ge 3) { End-BulkBackup; return }
+    if ($bulk.next -ge $bulk.items.Count) {
+        # 모든 대화를 한 번 돈 뒤 보류한 대화를 한 번만 묻고, 고른 대화를 큰 폴더와 함께 이어서 올린다.
+        if ($bulk.picked -ge 0 -or -not $bulk.deferred.Count) { End-BulkBackup; return }
+        $picked=@(Select-DeferredBackups $bulk.deferred); $bulk.picked=$picked.Count
+        if (-not $picked.Count) { End-BulkBackup; return }
+        $bulk.items=@($bulk.items) + @($picked | ForEach-Object { [pscustomobject]@{nativeId=$_.job.nativeId;title=$_.job.title;approved=@($_.folders | ForEach-Object { [string]$_.path })} })
+    }
     $item=$bulk.items[$bulk.next]; $bulk.next++
     $job=Base-Job 'Backup'; $job.nativeId=$item.nativeId; $job.remoteId=''; $job.title=$item.title
-    $job.projectApproved=@($bulk.approved); $job.projectDeclined=@($bulk.declined)
+    if ($item.approved) { $job.projectApproved=@($item.approved) }
     try { Start-Job $job } catch { $script:Bulk=$null; throw }
     $status.Text=(T 'GuiBulkProgress' $bulk.next $bulk.items.Count $bulk.done $bulk.failed.Count)
 }
 function Step-BulkBackup([hashtable]$Job,[object]$Result) {
     $bulk=$script:Bulk
     if ($Result.ok -and $Result.data.needsProjectConfirm) {
-        # 큰 작업 폴더는 이번 전체 백업에서 폴더마다 한 번만 묻는다. 답을 넣어 같은 대화를 다시 올리고, 취소하면 멈춘다.
-        $answered=Resolve-ProjectAsk @{} @($Result.data.folders)
-        if ($answered) { $bulk.approved+=@($answered.projectApproved | Where-Object { $_ }); $bulk.declined+=@($answered.projectDeclined | Where-Object { $_ }); $bulk.next-- }
-        else { $bulk.stop=$true }
+        if ($bulk.picked -lt 0) {
+            # 큰 작업 폴더가 있는 대화는 아무것도 올리지 않고 보류한다. 끝에 한 번에 묻는다.
+            $bulk.deferred+=,@{job=$Job;folders=@($Result.data.folders)}
+            $log.AppendText("$(T 'GuiBulkItemDeferred' $Job.title $Job.nativeId)`r`n")
+        } else {
+            # 고른 뒤 다시 실행하는 사이에 다른 폴더도 커졌다. 묻지 않은 폴더를 올리지 않고 실패로 남긴다.
+            $bulk.failed+="$($Job.title) · $($Job.nativeId): $(T 'GuiDeferredChanged')"
+            $log.AppendText("$(T 'GuiBulkItemFailed' $Job.title $Job.nativeId (T 'GuiDeferredChanged'))`r`n")
+        }
         Continue-BulkBackup
         return
     }
@@ -476,7 +512,10 @@ function Step-BulkBackup([hashtable]$Job,[object]$Result) {
 }
 function End-BulkBackup {
     $bulk=$script:Bulk; $script:Bulk=$null
-    $summary=T 'GuiBulkSummary' $bulk.done $bulk.skipped $bulk.busy.Count $bulk.failed.Count ($bulk.items.Count-$bulk.done-$bulk.busy.Count-$bulk.failed.Count)
+    # 하지 않음: 시작하지 못했거나 취소한 대화와, 보류했지만 고르지 않은(또는 묻기 전에 멈춘) 대화. 고른 대화는 목록 끝에 다시 들어가 있다.
+    $unpicked=$bulk.deferred.Count-[math]::Max($bulk.picked,0)
+    $summary=T 'GuiBulkSummary' $bulk.done $bulk.skipped $bulk.busy.Count $bulk.failed.Count ($bulk.items.Count-$bulk.done-$bulk.busy.Count-$bulk.failed.Count-$bulk.deferred.Count+$unpicked)
+    if ($bulk.deferred.Count) { $summary+=(T 'GuiBulkDeferredSummary' $bulk.deferred.Count ([math]::Max($bulk.picked,0))) }
     if ($bulk.streak -ge 3) { $summary+=(T 'GuiBulkStreakStop') } elseif ($bulk.stop) { $summary+=(T 'GuiBulkStopped') }
     $status.Text=$summary; $log.AppendText("$summary`r`n")
     if ($bulk.failed.Count) { Show-Error ("$summary`r`n`r`n" + (@($bulk.failed | Select-Object -First 10) -join "`r`n")) }

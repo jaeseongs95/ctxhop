@@ -9,7 +9,7 @@ $script:ProjectMaxBytes=16GB           # 받은 스냅숏을 풀 때의 전체 �
 # Git 저장소가 아닐 때만 빼는 생성 폴더. Git 저장소는 .gitignore를 따른다.
 $script:ProjectGeneratedDirs=@('node_modules','.venv','venv','__pycache__','dist','build','.next','target')
 # 이름으로 알아보는 비밀 파일. 내용은 검사하지 않는다.
-$script:ProjectSecretNames=@('.env','.env.*','*.pem','*.key','*.p12','*.pfx','*.jks','*.keystore','*.kdbx','id_rsa','id_rsa.*','id_dsa','id_dsa.*','id_ecdsa','id_ecdsa.*','id_ed25519','id_ed25519.*','.npmrc','.pypirc','.netrc','_netrc','.git-credentials')
+$script:ProjectSecretNames=@('.env','.env.*','*.pem','*.key','*.p12','*.pfx','*.jks','*.keystore','*.kdbx','id_rsa','id_rsa.*','id_dsa','id_dsa.*','id_ecdsa','id_ecdsa.*','id_ed25519','id_ed25519.*','.npmrc','.pypirc','.netrc','_netrc','.git-credentials','*.ppk','credentials.json','token.json','client_secret*.json')
 
 function ConvertTo-ProjectPath([string]$Value) {
     # \\?\ 접두사, / 구분자, 겹친 \를 정리한 전체 경로. 쓸 수 없는 경로면 $null.
@@ -31,7 +31,7 @@ function Get-ProjectIgnoredRoots {
     # 임시 폴더와 에이전트 설정 폴더. 추가 작업 폴더와 폴더 밖 편집에서 뺀다. 설정 폴더는 시작 폴더여도 뺀다(로그인 정보가 있다).
     $settings=@('.claude','.codex','.agents','.ctxhop') | ForEach-Object { ConvertTo-ProjectPath (Join-Path $env:USERPROFILE $_) }
     $temp=@([IO.Path]::GetTempPath(), (Join-Path $env:LOCALAPPDATA 'Temp')) | ForEach-Object { ConvertTo-ProjectPath $_ }
-    return [pscustomobject]@{settings=@($settings);all=@(@($settings)+@($temp) | Select-Object -Unique)}
+    return [pscustomobject]@{settings=@($settings);temp=@($temp | Select-Object -Unique);all=@(@($settings)+@($temp) | Select-Object -Unique)}
 }
 function Test-ProjectTooBroad([string]$Path) {
     # 드라이브·공유 루트, 사용자 폴더 자체와 그 위는 프로젝트가 아니다.
@@ -45,7 +45,8 @@ function Get-ProjectFolders([string]$Start, [string[]]$Cwds, [string[]]$Edits) {
     $folders=[Collections.Generic.List[object]]::new(); $skipped=[Collections.Generic.List[object]]::new()
     $first=ConvertTo-ProjectPath $Start
     if ($first) {
-        $reason=if (Test-ProjectTooBroad $first) {'tooBroad'} elseif (Test-ProjectUnder $first $ignored.settings) {'agentSettings'}
+        # 임시 폴더 자체도 너무 넓다. 임시 폴더 안의 작업 폴더는 시작 폴더일 때만 올린다.
+        $reason=if ((Test-ProjectTooBroad $first) -or $ignored.temp -icontains $first) {'tooBroad'} elseif (Test-ProjectUnder $first $ignored.settings) {'agentSettings'}
         if ($reason) { $skipped.Add([pscustomobject]@{path=$first;reason=$reason}) } else { $folders.Add([pscustomobject]@{path=$first;role='start'}) }
     }
     foreach ($value in @($Cwds)) {
@@ -91,10 +92,12 @@ $script:ProjectSecretPattern=[regex]::new('^(?:'+(($script:ProjectSecretNames | 
 function Test-ProjectSecretName([string]$Name) { return $script:ProjectSecretPattern.IsMatch($Name) }
 function Test-ProjectEntryPath([string]$Path) {
     # 백업 안의 상대 경로. 드라이브·절대 경로·..·.git·짧은 이름(GIT~1)·장치 이름·Windows가 줄이는 끝 점과 공백·비밀 파일은 거부한다.
+    # 백업할 때도 같은 규칙으로 걸러, 올린 파일은 모두 다른 PC에 복원할 수 있게 한다.
     if (-not $Path -or $Path.Length -gt 1024 -or $Path.IndexOfAny([IO.Path]::GetInvalidPathChars()) -ge 0 -or $Path.Contains(':') -or $Path.Contains('/') -or $Path.StartsWith('\')) { return $false }
     foreach ($part in $Path.Split('\')) {
         if (-not $part -or $part -in @('.','..') -or $part.EndsWith('.') -or $part.EndsWith(' ') -or $part.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0) { return $false }
-        if ($part -ieq '.git' -or $part -match '~[0-9]' -or $part -match '^(?i)(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9]|CONIN\$|CONOUT\$)(\..*)?$') { return $false }
+        # 짧은 이름은 8.3 형태(이름 8자 이하가 ~숫자로 끝나고 확장자 3자 이하)만 막는다. '보고(7_25~7_27).eml' 같은 긴 이름은 통과.
+        if ($part -ieq '.git' -or $part -match '^(?=[^.]{1,8}(\.[^.]{0,3})?$)[^.]*~[0-9]+(\.[^.]{0,3})?$' -or $part -match '^(?i)(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9]|CONIN\$|CONOUT\$)(\..*)?$') { return $false }
     }
     return -not (Test-ProjectSecretName ([IO.Path]::GetFileName($Path)))
 }
@@ -111,23 +114,31 @@ function Test-ProjectLinkFree([string]$Path, [string]$Root, [hashtable]$Cache) {
     }
     return $true
 }
+function Test-ProjectInRepo([string]$Root) {
+    # 이 폴더나 위 폴더에 .git(HEAD가 있는 폴더 또는 worktree·하위 모듈의 파일)이 있으면 Git 저장소 안이다.
+    # HEAD가 없는 .git 폴더(지우다 만 시험 저장소 등)는 git도 저장소로 보지 않으므로 폴더를 그냥 돈다.
+    for ($dir=$Root; $dir; $dir=[IO.Path]::GetDirectoryName($dir)) { $mark=[IO.Path]::Combine($dir,'.git'); if ([IO.File]::Exists($mark) -or [IO.File]::Exists([IO.Path]::Combine($mark,'HEAD'))) { return $true } }
+    return $false
+}
 function Invoke-ProjectGit([string]$Root) {
     # 저장소 안이면 이 폴더 아래의 추적 파일과 .gitignore에 걸리지 않은 새 파일(폴더 기준 상대 경로), 아니면 $null. 출력은 UTF-8로 읽는다.
+    # 저장소인데 git이 없거나 실패하면(소유자 검사 등) 폴더를 그냥 돌면 .gitignore에 걸린 파일까지 올라가므로 멈춘다.
+    if (-not (Test-ProjectInRepo $Root)) { return $null }
     $git=Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $git) { return $null }
+    if (-not $git) { throw (T 'PfGitFailed' $Root 'git') }
     $start=[Diagnostics.ProcessStartInfo]::new($git.Source,'ls-files -z --cached --others --exclude-standard')
     $start.WorkingDirectory=$Root; $start.UseShellExecute=$false; $start.CreateNoWindow=$true
     $start.RedirectStandardOutput=$true; $start.RedirectStandardError=$true; $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false)
     $process=[Diagnostics.Process]::Start($start)
     try {
-        $output=$process.StandardOutput.ReadToEndAsync(); $null=$process.StandardError.ReadToEnd(); $process.WaitForExit()
-        if ($process.ExitCode -ne 0) { return $null }
+        $output=$process.StandardOutput.ReadToEndAsync(); $errors=$process.StandardError.ReadToEnd(); $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { throw (T 'PfGitFailed' $Root ((@($errors -split "`r?`n" | Where-Object { $_ }) | Select-Object -First 1) -join '')) }
         return ,[string[]]@($output.Result.Split([char]0) | Where-Object { $_ } | ForEach-Object { $_.Replace('/','\') })
     } finally { $process.Dispose() }
 }
 function Get-ProjectFileList([string]$Root) {
     # 백업할 파일(상대 경로, 크기). Git 저장소면 git 목록, 아니면 폴더를 직접 돌며 생성 폴더를 뺀다. .git·비밀 파일·링크는 늘 뺀다.
-    $cache=@{}; $files=[Collections.Generic.List[object]]::new(); $excluded=[ordered]@{secret=0;generated=0;link=0;unreadable=0}
+    $cache=@{}; $files=[Collections.Generic.List[object]]::new(); $excluded=[ordered]@{secret=0;generated=0;link=0;unreadable=0;unsafe=0}
     $listed=Invoke-ProjectGit $Root
     $method=if ($null -ne $listed) {'git'} else {'walk'}
     if ($null -eq $listed) {
@@ -150,8 +161,10 @@ function Get-ProjectFileList([string]$Root) {
     if ($listed.Count -gt $script:ProjectMaxFiles) { throw (T 'PfTooManyFiles' $Root $script:ProjectMaxFiles) }
     [long]$bytes=0
     foreach ($relative in $listed) {
+        if ($relative.EndsWith('\')) { continue }   # git이 폴더로 보여 주는 안의 저장소. 하위 모듈처럼 내용은 옮기지 않는다.
         if ($relative.Split('\') -icontains '.git') { continue }
         if (Test-ProjectSecretName ([IO.Path]::GetFileName($relative))) { $excluded.secret++; continue }
+        if (-not (Test-ProjectEntryPath $relative)) { $excluded.unsafe++; continue }   # 복원할 때 거부될 이름은 올리지 않는다
         $full=[IO.Path]::Combine($Root,$relative)
         # Windows PowerShell 5.1의 .NET은 260자가 넘는 경로를 열지 못한다. 조용히 빠지지 않게 읽지 못한 파일로 센다.
         if ($full.Length -ge 260) { $excluded.unreadable++; continue }
@@ -260,7 +273,8 @@ function Compare-ProjectSnapshot([object]$Snapshot, [string]$Target) {
     }
     $sha.Dispose()
     if ([IO.Directory]::Exists($Target)) {
-        foreach ($file in (Get-ProjectFileList $Target).files) { if (-not $known.ContainsKey($file.path.ToLowerInvariant())) { $result.localOnly++ } }
+        # 이 PC에만 있는 파일 수는 참고용이라, 세지 못해도(파일이 너무 많음·git 실패) 비교와 복원은 막지 않는다.
+        try { foreach ($file in (Get-ProjectFileList $Target).files) { if (-not $known.ContainsKey($file.path.ToLowerInvariant())) { $result.localOnly++ } } } catch { $result.localOnly='?' }
     }
     $result.changedPaths=$result.changedPaths.ToArray()
     return [pscustomobject]$result
@@ -269,7 +283,7 @@ function Restore-ProjectSnapshot([string]$ZipPath, [string]$Target, [string]$Rec
     # 새 파일은 쓰고, 바뀐 파일은 원본을 $Recovery에 복사한 뒤 덮어쓴다. 지우는 파일은 없다. 쓰기 전에 모든 경로를 검사한다.
     $snapshot=Read-ProjectSnapshot $ZipPath
     $root=ConvertTo-ProjectPath $Target
-    if (-not $root -or (Test-ProjectTooBroad $root)) { throw (T 'PfTargetUnsafe' $Target) }
+    if (-not $root -or (Test-ProjectTooBroad $root) -or (Test-ProjectUnder $root (Get-ProjectIgnoredRoots).settings)) { throw (T 'PfTargetUnsafe' $Target) }
     $cache=@{}
     foreach ($file in $snapshot.files) {
         $full=[IO.Path]::GetFullPath((Join-Path $root $file.path))

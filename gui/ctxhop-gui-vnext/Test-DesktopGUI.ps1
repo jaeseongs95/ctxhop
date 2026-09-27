@@ -239,15 +239,29 @@ try {
     $projectFiles.Checked=$false; $j=Base-Job 'Backup'
     Assert ($j.projectBackup -eq $false -and $j.projectRestore -eq $false -and $script:Prefs.projectFiles -eq 'off') 'turning it off reaches jobs and preferences'
     $projectFiles.Checked=$true
-    # 큰 작업 폴더: 예는 함께 백업, 아니요는 그 폴더만 뺌, 취소는 백업 취소. 답을 넣어 같은 백업을 다시 실행한다.
+    # 큰 작업 폴더: 대화도 올리지 않고 보류했다가 목록 창에서 체크한 대화만 대화와 파일을 함께 올린다.
+    $items=@(@{job=@{title='첫 대화';nativeId='a'};folders=@(@{path='D:\큰 폴더';files=12;bytes=300MB})},@{job=@{title='둘째 대화';nativeId='b'};folders=@(@{path='E:\영상';files=3;bytes=900MB},@{path='E:\자료';files=1;bytes=250MB})})
+    $ui=New-DeferredDialog $items
+    try {
+        Assert ($ui.list.Items.Count -eq 2 -and $ui.list.CheckBoxes -and -not @($ui.list.Items | Where-Object Checked).Count -and $ui.list.Items[0].Text -eq '첫 대화') 'the list shows every held conversation and none is checked'
+        Assert ($ui.list.Items[1].SubItems[1].Text -eq 'E:\영상 · 파일 3개 · 900MB; E:\자료 · 파일 1개 · 250MB') "the list shows the large folders: $($ui.list.Items[1].SubItems[1].Text)"
+    } finally { $ui.dialog.Dispose() }
+    $realShowDialog=${function:Show-Dialog}
+    function Show-Dialog([object]$Dialog) { $list=@($Dialog.Controls | Where-Object { $_ -is [Windows.Forms.ListView] })[0]; $list.Items[1].Checked=$true; return $script:DialogAnswer }
+    try {
+        $script:DialogAnswer='OK'; $chosen=@(Select-DeferredBackups $items)
+        Assert ($chosen.Count -eq 1 -and $chosen[0].job.title -eq '둘째 대화') 'only checked conversations are returned'
+        $script:DialogAnswer='Cancel'
+        Assert (@(Select-DeferredBackups $items).Count -eq 0) 'closing the list uploads nothing'
+    } finally { ${function:Show-Dialog}=$realShowDialog }
     $big=@{ok=$true;data=@{needsProjectConfirm=$true;folders=@(@{path='D:\큰 폴더';files=12;bytes=300MB});message='합성 확인 필요'}}
-    foreach ($case in @(@{answer='Yes';key='projectApproved'},@{answer='No';key='projectDeclined'},@{answer='Cancel';key=''})) {
-        $script:StartedJobs=@(); $script:Choice=$case.answer; $script:AskedChoice=''
-        function Ask-Choice([string]$Message) { $script:AskedChoice=$Message; return $script:Choice }
+    function Select-DeferredBackups([object[]]$Items) { $script:AskCount++; $script:Offered=$Items; if ($script:Pick) { return @($Items | Select-Object -Last 1) } else { return @() } }
+    foreach ($pick in @($true,$false)) {
+        $script:StartedJobs=@(); $script:Pick=$pick; $script:Offered=$null; $script:AskCount=0
         Finish-Fake @{agent='codex-desktop';action='Backup';nativeId=$id;remoteId='';title='큰 대화';projectBackup=$true} $big
-        Assert ($script:AskedChoice -like '*D:\큰 폴더 · 파일 12개 · 300MB*' -and $script:AskedChoice -like '*취소: 이번 백업 취소*') "the size question lists the folder: $script:AskedChoice"
-        if ($case.key) { Assert ($script:StartedJobs.Count -eq 1 -and $script:StartedJobs[0].action -eq 'Backup' -and (@($script:StartedJobs[0][$case.key]) -join '|') -eq 'D:\큰 폴더') "answer $($case.answer) reruns the backup with $($case.key)" }
-        else { Assert ($script:StartedJobs.Count -eq 0 -and $status.Text -like '*아무것도 올리지 않았습니다*') 'cancel starts nothing' }
+        Assert ($script:AskCount -eq 1 -and @($script:Offered).Count -eq 1 -and $script:Offered[0].job.title -eq '큰 대화' -and $script:Offered[0].folders[0].path -eq 'D:\큰 폴더') 'a backup with a large folder offers the conversation in the list'
+        if ($pick) { Assert ($script:StartedJobs.Count -eq 1 -and $script:StartedJobs[0].action -eq 'Backup' -and $script:StartedJobs[0].title -eq '큰 대화' -and (@($script:StartedJobs[0].projectApproved) -join '|') -eq 'D:\큰 폴더') 'checking it uploads the conversation together with its files' }
+        else { Assert ($script:StartedJobs.Count -eq 0 -and $status.Text -like '*올리지 않았습니다*') 'leaving it unchecked uploads nothing' }
     }
     # 폴더 밖 편집과 복원하지 못한 파일은 기록 창에 남는다.
     Finish-Fake @{agent='codex-desktop';action='Backup';nativeId=$id;remoteId='';title='합성'} @{ok=$true;data=@{message='합성 백업 완료';project=@{folders=@();outside=@('E:\밖\notes.md')}}}
@@ -255,27 +269,44 @@ try {
     $script:DesktopApplyQueue=@()
     Finish-Fake @{agent='codex-desktop';action='Restore';nativeId=$id;remoteId=$a} @{ok=$true;data=@{message='합성 복원 완료';project=@{folders=@(@{failed=@(@{path='src\a.py';reason='잠김'})})}}}
     Assert ($log.Text -like '*복원하지 못한 프로젝트 파일: src\a.py: 잠김*') 'files that failed to restore are listed'
-    # 전체 백업: 큰 폴더는 이번 실행에서 폴더마다 한 번만 묻고, 답은 뒤 대화에도 쓴다. 취소하면 멈춘다.
+    # 전체 백업: 큰 폴더가 있는 대화는 보류하고 끝까지 돈 뒤 한 번만 묻는다. 체크한 대화만 큰 폴더와 함께 다시 올린다.
     Fill-Sessions @(foreach ($n in 0..2) { Row $ids[$n] 'D:\codex\AI논문' $true $t1 })
-    $script:StartedJobs=@(); $script:Errors=@(); $script:Choice='No'; $script:AskCount=0
-    function Ask-Choice([string]$Message) { $script:AskCount++; return $script:Choice }
+    $script:StartedJobs=@(); $script:Errors=@(); $script:AskCount=0; $script:Pick=$true
     Start-BulkBackup
     $firstId=$script:StartedJobs[0].nativeId
     Finish-Fake $script:StartedJobs[0] $big
-    Assert ($script:StartedJobs.Count -eq 2 -and $script:StartedJobs[1].nativeId -eq $firstId -and (@($script:StartedJobs[1].projectDeclined) -join '|') -eq 'D:\큰 폴더' -and $script:AskCount -eq 1) 'bulk reruns the same conversation with the answer'
+    Assert ($script:StartedJobs.Count -eq 2 -and $script:StartedJobs[1].nativeId -ne $firstId -and -not $script:StartedJobs[1].projectApproved -and $script:AskCount -eq 0 -and $log.Text -like '*작업 폴더가 커서 보류*') 'a held conversation uploads nothing and the run moves on without asking'
     Finish-Fake $script:StartedJobs[1] @{ok=$true;data=@{message='합성 백업 완료'}}
-    Assert ($script:StartedJobs.Count -eq 3 -and $script:StartedJobs[2].nativeId -ne $firstId -and (@($script:StartedJobs[2].projectDeclined) -join '|') -eq 'D:\큰 폴더') 'later conversations reuse the answer'
-    $script:Choice='Cancel'
+    $thirdId=$script:StartedJobs[2].nativeId
     Finish-Fake $script:StartedJobs[2] @{ok=$true;data=@{needsProjectConfirm=$true;folders=@(@{path='D:\다른 큰 폴더';files=1;bytes=250MB});message='합성'}}
-    Assert ($null -eq $script:Bulk -and $script:AskCount -eq 2 -and $status.Text -like '*성공 1*하지 않음 2*') "cancel at the size question stops the run: $($status.Text)"
+    Assert ($script:AskCount -eq 1 -and @($script:Offered).Count -eq 2 -and $script:StartedJobs.Count -eq 4 -and $script:StartedJobs[3].nativeId -eq $thirdId -and (@($script:StartedJobs[3].projectApproved) -join '|') -eq 'D:\다른 큰 폴더') 'after the run the held conversations are offered once and the checked one reruns with its folders'
+    Finish-Fake $script:StartedJobs[3] @{ok=$true;data=@{message='합성 백업 완료'}}
+    Assert ($null -eq $script:Bulk -and $script:AskCount -eq 1 -and $status.Text -like '*성공 2*하지 않음 1*보류 2개 중 1개*') "the summary counts the unchecked conversation as not run: $($status.Text)"
+    if ($script:StartedJobs[-1].action -eq 'List') { Finish-Fake $script:StartedJobs[-1] @{ok=$true;data=@{sessions=@();excluded=0;message='합성 목록'}} }
+    # 고른 뒤 다시 실행할 때 다른 폴더도 커졌으면 묻지 않은 폴더는 올리지 않고 실패로 남긴다.
+    Fill-Sessions @(Row $ids[0] 'D:\codex\AI논문' $true $t1)
+    $script:StartedJobs=@(); $script:Errors=@(); $script:AskCount=0
+    Start-BulkBackup
+    Finish-Fake $script:StartedJobs[0] $big
+    Finish-Fake $script:StartedJobs[1] $big
+    Assert ($null -eq $script:Bulk -and $script:AskCount -eq 1 -and $script:StartedJobs.Count -eq 2 -and $script:Errors[-1] -like '*200MB를 넘어*') "a folder that grew after the choice is not uploaded: $($script:Errors -join ' | ')"
+    # 멈추면 보류한 대화는 묻지 않고 하지 않음으로 센다.
+    Fill-Sessions @(foreach ($n in 0..1) { Row $ids[$n] 'D:\codex\AI논문' $true $t1 })
+    $script:StartedJobs=@(); $script:Errors=@(); $script:AskCount=0
+    Start-BulkBackup
+    Finish-Fake $script:StartedJobs[0] $big
+    $script:Bulk.stop=$true
+    Finish-Fake $script:StartedJobs[1] @{ok=$true;data=@{message='합성 백업 완료'}}
+    Assert ($null -eq $script:Bulk -and $script:AskCount -eq 0 -and $status.Text -like '*성공 1*하지 않음 1*') "a stopped run does not ask about held conversations: $($status.Text)"
     if ($script:StartedJobs[-1].action -eq 'List') { Finish-Fake $script:StartedJobs[-1] @{ok=$true;data=@{sessions=@();excluded=0;message='합성 목록'}} }
     # 미리보기: 검토 창의 프로젝트 파일 열과 상세. 승인하면 이 PC에 없는 추가 폴더만 고른다.
     $found=[pscustomobject]@{state='found';receipt='D:\staging\project-receipt.json';createdAt='2026-09-27T01:00:00Z';outside=@('E:\밖\notes.md');folders=@(
         [pscustomobject]@{index=0;role='start';sourcePath='D:\원본\앱';target='D:\이 PC';state='ready';reason='';compare=[pscustomobject]@{new=2;changed=1;same=5;localOnly=3}},
         [pscustomobject]@{index=1;role='extra';sourcePath='D:\원본\lib';target='';state='needsFolder';reason='';compare=$null},
-        [pscustomobject]@{index=2;role='extra';sourcePath='D:\원본\큰';target='';state='skipped';reason='declined';compare=$null})}
+        [pscustomobject]@{index=2;role='extra';sourcePath='D:\원본\큰';target='';state='skipped';reason='tooLarge';compare=$null},
+        [pscustomobject]@{index=3;role='extra';sourcePath='D:\원본\깨짐';target='';state='error';reason='합성 읽기 오류';compare=$null})}
     $text=Format-ProjectPreview $found
-    Assert ($text -like '*D:\원본\앱 → D:\이 PC: 새 파일 2개, 바뀔 파일 1개(원본 보관), 같은 파일 5개, 이 PC에만 있는 파일 3개(그대로 둠)*' -and $text -like '*D:\원본\lib: 이 PC에 없는 폴더*' -and $text -like '*D:\원본\큰: 백업하지 않음(크기 때문에 뺌)*' -and $text -like '*밖에서 고친 파일 1개*') "project preview text: $text"
+    Assert ($text -like '*D:\원본\앱 → D:\이 PC: 새 파일 2개, 바뀔 파일 1개(원본 보관), 같은 파일 5개, 이 PC에만 있는 파일 3개(그대로 둠)*' -and $text -like '*D:\원본\lib: 이 PC에 없는 폴더*' -and $text -like '*D:\원본\큰: 백업하지 않음(압축해도 1GiB가 넘음)*' -and $text -like '*D:\원본\깨짐: 받은 백업을 읽지 못해 복원하지 않음(합성 읽기 오류)*' -and $text -like '*밖에서 고친 파일 1개*') "project preview text: $text"
     Assert ((Format-ProjectPreview ([pscustomobject]@{state='none'})) -like '*없습니다*' -and (Format-ProjectPreview ([pscustomobject]@{state='error';reason='합성 오류'})) -like '*합성 오류*' -and (Format-ProjectPreview $null) -like '*선택 꺼짐*') 'none, error and off are explained'
     $projectReviews=@(
         [pscustomobject]@{job=@{action='Preview';agent='codex-desktop';nativeId=$id;remoteId=$a;title='프로젝트 있음';sourceCwd='D:\원본\앱';projectPath='D:\이 PC';home='D:\데이터';projectRestore=$true};receipt='fixture-inspect.json';preview=[pscustomobject]@{status='incoming_newer';reason='fixture';token='t-a';source=@{};target=@{}};project=$found},

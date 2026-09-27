@@ -199,14 +199,13 @@ function Get-ProjectBundles {
     }
 }
 function Get-ProjectPlan([object]$Job,[string]$Start,[string[]]$Cwds,[string[]]$Edits) {
-    # 백업할 작업 폴더와 파일 목록. 커서 아직 묻지 않은 폴더는 ask에 모은다. 묻고 뺀 폴더는 declined로 건너뛴다.
+    # 백업할 작업 폴더와 파일 목록. 커서 아직 허락받지 않은 폴더는 ask에 모은다(그러면 GUI가 대화째 보류한다).
     $picked=Get-ProjectFolders $Start $Cwds $Edits
-    $approved=@(@($Job.projectApproved) | ForEach-Object { ConvertTo-ProjectPath $_ }); $declined=@(@($Job.projectDeclined) | ForEach-Object { ConvertTo-ProjectPath $_ })
+    $approved=@(@($Job.projectApproved) | ForEach-Object { ConvertTo-ProjectPath $_ })
     $folders=@(); $ask=@()
     foreach ($folder in $picked.folders) {
         $entry=[ordered]@{role=$folder.role;sourcePath=$folder.path;bundleId='';contentHash='';files=0;bytes=[long]0;status='skipped';reason='';list=$null}
-        if ($declined -icontains $folder.path) { $entry.reason='declined' }
-        elseif (-not [IO.Directory]::Exists($folder.path)) { $entry.reason='missing' }
+        if (-not [IO.Directory]::Exists($folder.path)) { $entry.reason='missing' }
         else {
             try {
                 $entry.list=Get-ProjectFileList $folder.path; $entry.files=$entry.list.files.Count; $entry.bytes=$entry.list.bytes; $entry.status='pending'
@@ -218,13 +217,13 @@ function Get-ProjectPlan([object]$Job,[string]$Start,[string[]]$Cwds,[string[]]$
     return @{folders=$folders;skipped=@($picked.skipped);outside=@($picked.outside);ask=$ask}
 }
 function New-ProjectQuestion([hashtable]$Plan) {
-    # 대화도 올리지 않고 돌려준다. GUI가 물은 뒤 projectApproved·projectDeclined를 넣어 다시 실행한다.
+    # 대화도 올리지 않고 돌려준다. GUI가 보류했다가 사용자가 고르면 projectApproved를 넣어 다시 실행한다.
     return @{needsProjectConfirm=$true;folders=@($Plan.ask);message=(T 'WkProjectAskSize' @($Plan.ask).Count)}
 }
 function Save-ProjectBackup([hashtable]$Plan,[string]$Agent,[string]$SessionId,[string]$Conversation,[string]$Stage) {
     # 폴더마다 같은 내용의 백업이 이미 있으면 연결만 하고 없으면 올린다. 마지막에 이 대화 백업과 폴더 백업을 잇는 기록을 올린다.
     $bundles=[Collections.Generic.List[object]]::new(); foreach ($bundle in @(Get-ProjectBundles)) { $bundles.Add($bundle) }
-    $unreadable=0
+    $unreadable=0; $unsafe=0
     for ($i=0; $i -lt $Plan.folders.Count; $i++) {
         $entry=$Plan.folders[$i]
         if ($entry.status -ne 'pending') { continue }
@@ -239,7 +238,7 @@ function Save-ProjectBackup([hashtable]$Plan,[string]$Agent,[string]$SessionId,[
                 $hash=$snapshot.hash; $missed=$snapshot.unreadable.Count; $entry.files=$snapshot.files; $entry.bytes=$snapshot.bytes
                 $found=@($bundles | Where-Object { $_.metadata.historyMode -ceq "project-files;v1;$hash" })
             }
-            $entry.contentHash=$hash; $unreadable+=$missed+[int]$entry.list.excluded.unreadable
+            $entry.contentHash=$hash; $unreadable+=$missed+[int]$entry.list.excluded.unreadable; $unsafe+=[int]$entry.list.excluded.unsafe
             if ($found.Count) { $entry.bundleId=$found[0].id; $entry.status='reused' }
             elseif ($snapshot.archiveBytes -gt $script:ProjectMaxArchiveBytes) { $entry.status='skipped'; $entry.reason='tooLarge' }
             else {
@@ -261,6 +260,7 @@ function Save-ProjectBackup([hashtable]$Plan,[string]$Agent,[string]$SessionId,[
     $message=T 'WkProjectBackedUp' $folders.Count $uploaded $reused ($folders.Count-$uploaded-$reused)
     if ($Plan.outside.Count) { $message+=T 'WkProjectOutside' $Plan.outside.Count }
     if ($unreadable) { $message+=T 'WkProjectUnreadable' $unreadable }
+    if ($unsafe) { $message+=T 'WkProjectUnsafeNames' $unsafe }
     return @{linkId=$linkId;folders=$folders;skipped=@($Plan.skipped);outside=@($Plan.outside);message=$message}
 }
 function Read-ProjectLink([string]$File,[string]$Agent,[string]$SessionId,[string]$Conversation) {
@@ -279,17 +279,21 @@ function Get-ProjectPreview([string]$Agent,[string]$SessionId,[string]$Conversat
     $linkFile=Join-Path $Stage 'project-link.json'
     $null=Get-BundleFile $links[0].id $linkFile
     $link=Read-ProjectLink $linkFile $Agent $SessionId $Conversation
-    $folders=@()
+    $folders=@(); $ignored=(Get-ProjectIgnoredRoots).all
     for ($i=0; $i -lt $link.folders.Count; $i++) {
         $folder=$link.folders[$i]
         $entry=[ordered]@{index=$i;role=$folder.role;sourcePath=(ConvertTo-ProjectPath $folder.sourcePath);status=$folder.status;reason=[string]$folder.reason;files=$folder.files;bytes=$folder.bytes;bundleId=[string]$folder.bundleId;contentHash=[string]$folder.contentHash;target='';zip='';sha256='';compare=$null;state='skipped'}
         if ($folder.status -ne 'skipped') {
-            $entry.target=if ($folder.role -eq 'start') {$Target} elseif ([IO.Directory]::Exists($entry.sourcePath)) {$entry.sourcePath} else {''}
-            $entry.zip=Join-Path $Stage "project-$i.zip"
-            $entry.sha256=(Get-BundleFile $folder.bundleId $entry.zip).sha256
-            $snapshot=Read-ProjectSnapshot $entry.zip
-            if ($snapshot.hash -cne $folder.contentHash) { throw (T 'WkProjectContentMismatch' $entry.sourcePath) }
-            if ($entry.target) { $entry.compare=Compare-ProjectSnapshot $snapshot $entry.target; $entry.state='ready' } else { $entry.state='needsFolder' }
+            # 한 폴더를 받거나 읽지 못해도 다른 폴더와 대화 미리보기는 그대로 둔다. 그 폴더만 error로 두고 복원하지 않는다.
+            try {
+                $autoTarget=[IO.Directory]::Exists($entry.sourcePath) -and -not (Test-ProjectTooBroad $entry.sourcePath) -and -not (Test-ProjectUnder $entry.sourcePath $ignored)
+                $entry.target=if ($folder.role -eq 'start') {$Target} elseif ($autoTarget) {$entry.sourcePath} else {''}
+                $entry.zip=Join-Path $Stage "project-$i.zip"
+                $entry.sha256=(Get-BundleFile $folder.bundleId $entry.zip).sha256
+                $snapshot=Read-ProjectSnapshot $entry.zip
+                if ($snapshot.hash -cne $folder.contentHash) { throw (T 'WkProjectContentMismatch' $entry.sourcePath) }
+                if ($entry.target) { $entry.compare=Compare-ProjectSnapshot $snapshot $entry.target; $entry.state='ready' } else { $entry.state='needsFolder' }
+            } catch { $entry.state='error'; $entry.reason=$_.Exception.Message; $entry.target=''; $entry.compare=$null }
         }
         $folders+=,$entry
     }
@@ -308,7 +312,7 @@ function Read-ProjectReceipt([string]$Path,[string]$Agent,[string]$SessionId,[st
     $record=try { Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json } catch { throw (T 'WkProjectReceiptInvalid') }
     if ($record.agent -cne $Agent -or $record.sessionId -ne $SessionId -or $record.conversation -cne $Conversation -or $record.folders -isnot [array]) { throw (T 'WkProjectReceiptInvalid') }
     foreach ($folder in $record.folders) {
-        if ($folder.state -eq 'skipped') { continue }
+        if ($folder.state -notin @('ready','needsFolder')) { continue }
         if ($folder.index -isnot [int] -or $folder.role -notin @('start','extra') -or $folder.zip -ne (Join-Path $stage "project-$($folder.index).zip") -or $folder.sha256 -notmatch '^[a-fA-F0-9]{64}$') { throw (T 'WkProjectReceiptInvalid') }
     }
     return $record
@@ -320,15 +324,18 @@ function Restore-ProjectFolders([object]$Job,[string]$Receipt,[string]$Agent,[st
         $record=Read-ProjectReceipt $Receipt $Agent $SessionId $Conversation
         $recovery=$null; $results=@()
         foreach ($folder in $record.folders) {
-            if ($folder.state -eq 'skipped') { continue }
+            if ($folder.state -notin @('ready','needsFolder')) { continue }
             $override=if ($Job.projectTargets) { $Job.projectTargets.PSObject.Properties[[string]$folder.index] } else { $null }
             $target=if ($folder.role -eq 'start') {$StartTarget} elseif ($override) {[string]$override.Value} else {[string]$folder.target}
-            $entry=[ordered]@{index=$folder.index;role=$folder.role;sourcePath=$folder.sourcePath;target=$target;state='skipped';written=0;backedUp=0;same=0;failed=@()}
+            $entry=[ordered]@{index=$folder.index;role=$folder.role;sourcePath=$folder.sourcePath;target=$target;state='skipped';written=0;backedUp=0;same=0;failed=@();error=''}
             if ($target) {
-                if ((Get-FileHash -LiteralPath $folder.zip -Algorithm SHA256).Hash -ne $folder.sha256) { throw (T 'WkArchiveChanged') }
-                if (-not $recovery) { $recovery=New-DesktopStage 'project-recovery' }
-                $restored=Restore-ProjectSnapshot $folder.zip $target (Join-Path $recovery ([string]$folder.index))
-                $entry.state='restored'; $entry.written=$restored.written; $entry.backedUp=$restored.backedUp; $entry.same=$restored.same; $entry.failed=@($restored.failed)
+                # 한 폴더가 실패해도(받은 파일이 바뀜, 쓸 수 없는 위치) 다른 폴더는 복원하고 기록을 남긴다. 실패한 폴더에는 쓰기 전에 멈춘다.
+                try {
+                    if ((Get-FileHash -LiteralPath $folder.zip -Algorithm SHA256).Hash -ne $folder.sha256) { throw (T 'WkArchiveChanged') }
+                    if (-not $recovery) { $recovery=New-DesktopStage 'project-recovery' }
+                    $restored=Restore-ProjectSnapshot $folder.zip $target (Join-Path $recovery ([string]$folder.index))
+                    $entry.state='restored'; $entry.written=$restored.written; $entry.backedUp=$restored.backedUp; $entry.same=$restored.same; $entry.failed=@($restored.failed)
+                } catch { $entry.state='failed'; $entry.error=$_.Exception.Message }
             }
             $results+=,$entry
         }
@@ -336,6 +343,7 @@ function Restore-ProjectFolders([object]$Job,[string]$Receipt,[string]$Agent,[st
         $restoredCount=0; $written=0; $backedUp=0; $failed=0
         foreach ($entry in $results) { if ($entry.state -eq 'restored') { $restoredCount++ }; $written+=$entry.written; $backedUp+=$entry.backedUp; $failed+=@($entry.failed).Count }
         $message=T 'WkProjectRestored' $restoredCount $written $backedUp $failed $(if ($recovery) {$recovery} else {'-'})
+        foreach ($entry in @($results | Where-Object { $_.state -eq 'failed' })) { $message+=T 'WkProjectFolderRestoreFailed' $entry.sourcePath $entry.error }
         return @{message=$message;folders=$results;recovery=$recovery}
     } catch { return @{message=(T 'WkProjectRestoreFailed' $_.Exception.Message);folders=@();recovery=$null} }
 }

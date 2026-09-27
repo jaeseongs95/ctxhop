@@ -198,7 +198,7 @@ try {
         function Get-Stored([string]$Mode) { @($script:Store.Values | Where-Object { $_.metadata.historyMode -like $Mode }) }
         function Get-ZipNames([string]$File) { $zip=[IO.Compression.ZipFile]::OpenRead($File); try { @($zip.Entries | ForEach-Object FullName | Sort-Object) } finally { $zip.Dispose() } }
         $projects=Join-Path $testDirectory 'projects'; $projA=Join-Path $projects '앱'; $projB=Join-Path $projects 'lib'; $gone=Join-Path $projects 'gone'
-        foreach ($pair in @(@("$projA\src\app.py",'v1'),@("$projA\README.md",'# 앱'),@("$projA\.env",'SECRET=1'),@("$projA\node_modules\x.js",'x'),@("$projB\lib.py",'lib v1'))) {
+        foreach ($pair in @(@("$projA\src\app.py",'v1'),@("$projA\README.md",'# 앱'),@("$projA\.env",'SECRET=1'),@("$projA\node_modules\x.js",'x'),@("$projB\lib.py",'lib v1'),@("$projA\AB~1.txt",'short'))) {
             $null=[IO.Directory]::CreateDirectory((Split-Path -Parent $pair[0])); [IO.File]::WriteAllText($pair[0],$pair[1])
         }
         $outsideEdit=Join-Path $testDirectory 'elsewhere\notes.md'
@@ -209,7 +209,7 @@ try {
         # 백업: 대화, 작업 폴더 2개, 연결 기록이 올라가고 비밀 파일·생성 폴더는 빠진다. 없는 폴더와 폴더 밖 편집은 기록만 남는다.
         $first=Invoke-JobCore $codex
         Assert ($first.project.folders.Count -eq 3 -and ((@($first.project.folders | ForEach-Object { "$($_.role):$($_.status):$($_.reason)" })) -join '|') -eq 'start:uploaded:|extra:uploaded:|extra:skipped:missing') "project backup folders: $($first.project.folders | ConvertTo-Json -Compress)"
-        Assert (($first.project.outside -join '|') -eq $outsideEdit -and $first.message -match '프로젝트 폴더 3개' -and $first.message -match '폴더 밖에서 고친 파일 1개') "project backup message: $($first.message)"
+        Assert (($first.project.outside -join '|') -eq $outsideEdit -and $first.message -match '프로젝트 폴더 3개' -and $first.message -match '폴더 밖에서 고친 파일 1개' -and $first.message -match '복원할 수 없는 이름\(짧은 이름 형식 GIT~1, 장치 이름 CON 등\)의 파일 1개') "project backup message: $($first.message)"
         Assert (@(Get-Stored 'project-files;*').Count -eq 2 -and @(Get-Stored 'project-link;*').Count -eq 1 -and @(Get-Stored 'paginated*').Count -eq 1) "conversation, two folders and one link are stored: $(@($script:Store.Values | ForEach-Object { $_.metadata.historyMode }) -join ' / ')"
         $firstLink=@(Get-Stored 'project-link;*')[0]
         Assert ($firstLink.metadata.historyMode -eq 'project-link;v1;codex-desktop' -and $firstLink.metadata.title -ceq $first.bundle.id -and $firstLink.metadata.sessionId -eq $script:Id -and $firstLink.metadata.sourceCwd -eq $projA) 'the link names the conversation bundle and start folder'
@@ -224,15 +224,18 @@ try {
         $third=Invoke-JobCore $codex
         Assert ((@($third.project.folders | ForEach-Object status) -join '|') -eq 'uploaded|reused|skipped' -and @(Get-Stored 'project-files;*').Count -eq 3) 'only the changed folder is uploaded again'
 
-        # 큰 폴더: 묻기 전에는 아무것도 올리지 않고, 답(허용·제외)을 넣어 다시 실행하면 그대로 따른다.
+        # 큰 폴더: 허락받기 전에는 아무것도 올리지 않고, 모든 큰 폴더를 허락해 다시 실행하면 대화와 함께 올린다.
         $script:ProjectAskBytes=1; $count=$script:Store.Count; $puts=@($script:Calls | Where-Object { $_.kind -eq 'bundle' -and $_.arguments[0] -eq 'put' }).Count
         $ask=Invoke-JobCore $codex
         Assert ($ask.needsProjectConfirm -and (@($ask.folders | ForEach-Object path) -join '|') -eq "$projA|$projB" -and $ask.message -match '200MB') 'large folders are asked about first'
         Assert ($script:Store.Count -eq $count -and @($script:Calls | Where-Object { $_.kind -eq 'bundle' -and $_.arguments[0] -eq 'put' }).Count -eq $puts -and (Test-StagingClean)) 'nothing is uploaded or left in staging before the answer'
-        $codex.projectApproved=@($projA); $codex.projectDeclined=@($projB)
+        $codex.projectApproved=@($projA)
+        $partial=Invoke-JobCore $codex
+        Assert ($partial.needsProjectConfirm -and (@($partial.folders | ForEach-Object path) -join '|') -eq $projB -and $script:Store.Count -eq $count -and (Test-StagingClean)) 'a large folder that was not approved is asked about again and nothing is uploaded'
+        $codex.projectApproved=@($projA,$projB)
         $answered=Invoke-JobCore $codex
-        Assert (-not $answered.needsProjectConfirm -and (@($answered.project.folders | ForEach-Object { "$($_.status):$($_.reason)" }) -join '|') -eq 'reused:|skipped:declined|skipped:missing') 'approved folders are backed up and declined ones skipped'
-        $script:ProjectAskBytes=200MB; $codex.Remove('projectApproved'); $codex.Remove('projectDeclined')
+        Assert (-not $answered.needsProjectConfirm -and (@($answered.project.folders | ForEach-Object { "$($_.status):$($_.reason)" }) -join '|') -eq 'reused:|reused:|skipped:missing' -and $script:Store.Count -eq $count+2) 'approved folders are backed up with the conversation'
+        $script:ProjectAskBytes=200MB; $codex.Remove('projectApproved')
         # 1GiB를 넘는 압축 파일은 올리지 않고 이유를 남긴다(한도를 낮춰 확인).
         $script:ProjectMaxArchiveBytes=10; [IO.File]::WriteAllText("$projA\src\app.py",'v3')
         $large=Invoke-JobCore $codex
@@ -257,6 +260,11 @@ try {
         foreach ($pair in @(@("$restoreTarget\src\app.py",'local edit'),@("$restoreTarget\local.txt",'keep'))) { $null=[IO.Directory]::CreateDirectory((Split-Path -Parent $pair[0])); [IO.File]::WriteAllText($pair[0],$pair[1]) }
         Rename-Item -LiteralPath $projB -NewName 'lib-moved'; $picked=Join-Path $testDirectory 'picked-lib'
         $restore=@{action='Preview';agent='codex-desktop';home=$desktopRoot;projectPath=$restoreTarget;nativeId=$script:Id;remoteId=$first.bundle.id;projectRestore=$true}
+        $storedB=@(Get-Stored 'project-files;*' | Where-Object { $_.metadata.sourceCwd -eq $projB })[0].file; $bytesB=[IO.File]::ReadAllBytes($storedB)
+        [IO.File]::WriteAllText($storedB,'not a zip')
+        try { $iso=Invoke-JobCore $restore } finally { [IO.File]::WriteAllBytes($storedB,$bytesB) }
+        Assert ($iso.preview.token -and $iso.project.folders[0].state -eq 'ready' -and $iso.project.folders[1].state -eq 'error' -and $iso.project.folders[1].reason -and $iso.project.folders[1].target -eq '' -and $iso.project.folders[2].state -eq 'skipped') "one unreadable folder does not stop the others: $($iso.project.folders | ConvertTo-Json -Depth 2 -Compress)"
+        $null=Remove-DesktopStage (Split-Path -Parent $iso.receipt)
         $shown=Invoke-JobCore $restore
         $p=$shown.project
         Assert ($p.state -eq 'found' -and $p.folders.Count -eq 3 -and (($p.outside) -join '|') -eq $outsideEdit) "project preview found: $($p | ConvertTo-Json -Depth 4 -Compress)"
@@ -277,9 +285,9 @@ try {
             $restore.action='Preview'; $restore.projectRestore=$true; $shown=Invoke-JobCore $restore
             $restore.action='Restore'; $restore.receipt=$shown.receipt; $restore.token=$shown.preview.token; $restore.projectRestore=$case.restore
             if ($case.tamper) { [IO.File]::AppendAllText($shown.project.folders[0].zip,'x') }
-            $done=Invoke-JobCore $restore
+            $done=Invoke-JobCore ($restore | ConvertTo-Json -Depth 5 | ConvertFrom-Json)   # GUI처럼 JSON을 거쳐 고른 폴더(projectTargets)도 쓴다
             Assert ([IO.File]::ReadAllText("$restoreTarget\src\app.py") -eq 'local again') "project files stay for $($case | ConvertTo-Json -Compress)"
-            if ($case.tamper) { Assert ($done.message -match '프로젝트 파일은 복원하지 못했습니다' -and $done.applied.status -eq 'imported') 'a changed download fails only the project part' }
+            if ($case.tamper) { Assert ($done.message -match '폴더는 복원하지 못했습니다' -and $done.applied.status -eq 'imported' -and (@($done.project.folders | ForEach-Object state) -join '|') -eq 'failed|restored' -and (Test-Path -LiteralPath "$($done.project.recovery)\restore-log.json")) "a changed download fails only that folder; the others are restored and logged: $($done.message)" }
         }
         $script:ApplyStatus='imported'; $restore.projectRestore=$true
         # 미리보기를 꺼 두면 프로젝트 파일을 받지 않는다.
@@ -318,6 +326,10 @@ try {
         $claude.action='Preview'; $claude.projectPath=$claudeTarget; $claude.projectRestore=$true
         $cp=Invoke-JobCore $claude
         Assert ($cp.message -eq '미리보기 완료.' -and $cp.project.state -eq 'found' -and $cp.project.folders[0].compare.new -eq 2 -and $cp.project.folders[1].target -eq $projB) 'Claude preview uses the latest link and the original extra path'
+        $env:TMP=$projects; $env:TEMP=$projects
+        try { $inTemp=Invoke-JobCore $claude } finally { $env:TMP=Join-Path $testDirectory 'fake-temp'; $env:TEMP=$env:TMP }
+        Assert ($inTemp.project.folders[0].state -eq 'ready' -and $inTemp.project.folders[1].state -eq 'needsFolder' -and $inTemp.project.folders[1].target -eq '') 'an extra folder whose original path is under temp or settings is never picked automatically'
+        $null=Remove-DesktopStage (Split-Path -Parent $inTemp.project.receipt)
         $claude.action='Restore'; $claude.projectReceipt=$cp.project.receipt
         $cr=Invoke-JobCore $claude
         Assert ([IO.File]::ReadAllText("$claudeTarget\src\app.py") -eq 'claude v2' -and $cr.message -match '^복원 완료\. 프로젝트 폴더 2개 복원' -and -not (Test-Path -LiteralPath (Split-Path -Parent $cp.project.receipt))) "Claude restore writes the latest backup: $($cr.message)"

@@ -69,6 +69,10 @@ try {
     $broad=Get-ProjectFolders 'C:\Users\fixture' @() @()
     Assert ($broad.folders.Count -eq 0 -and $broad.skipped[0].reason -eq 'tooBroad') 'the user profile itself is too broad'
     $env:USERPROFILE=$oldProfile; $env:LOCALAPPDATA=$oldLocal
+    $tempRoot=Get-ProjectFolders ([IO.Path]::GetTempPath()) @() @()
+    Assert ($tempRoot.folders.Count -eq 0 -and $tempRoot.skipped[0].reason -eq 'tooBroad') 'the temp folder itself is too broad even as the start folder'
+    $inTemp=Get-ProjectFolders $testDirectory @() @()
+    Assert ($inTemp.folders.Count -eq 1 -and $inTemp.folders[0].path -eq $testDirectory -and $inTemp.folders[0].role -eq 'start') 'a project folder inside temp is kept as the start folder'
 
     # 3) Claude Code 대화 파일: cwd와 편집 도구의 절대 경로만 모은다.
     $jsonl=Join-Path $testDirectory 'session.jsonl'
@@ -86,33 +90,53 @@ try {
     Assert (($work.cwds -join '|') -eq 'D:\codex\경력|E:\side') 'a session file that cannot be opened is skipped, not fatal'
 
     # 4) 백업 안 경로 검사.
-    foreach ($good in @('src\a.txt','한글 폴더\메모.txt','.gitignore','a.b\c')) { Assert (Test-ProjectEntryPath $good) "safe path accepted: $good" }
-    foreach ($bad in @('','..\x','a\..\b','.\a','C:\x','a:b','\x','a/b','a\\b','.git\config','A\.GIT\hooks\x','GIT~1\config','CON','nul.txt','a\com1','a.','a \b','.env','sub\.env.local','sub\id_rsa','x.pem','k.KEY',('a'*1100))) {
+    foreach ($good in @('src\a.txt','한글 폴더\메모.txt','.gitignore','a.b\c','메일\보고(7_25~7_27).eml','2026~2027.txt','a~1.json')) { Assert (Test-ProjectEntryPath $good) "safe path accepted: $good" }
+    foreach ($bad in @('','..\x','a\..\b','.\a','C:\x','a:b','\x','a/b','a\\b','.git\config','A\.GIT\hooks\x','GIT~1\config','AB~1.txt','README~1.MD','PROGRA~1\x','CON','nul.txt','a\com1','a.','a \b','.env','sub\.env.local','sub\id_rsa','x.pem','k.KEY','credentials.json','token.json','client_secret_1.json','putty.ppk',('a'*1100))) {
         Assert (-not (Test-ProjectEntryPath $bad)) "unsafe path rejected: $bad"
     }
 
     # 5) Git이 아닌 폴더: 생성 폴더·.git·비밀 파일·정션을 뺀다.
     $walk=Join-Path $testDirectory 'walk'; $outsideDir=Join-Path $testDirectory 'outside'
-    Write-Fixture $walk @{'src\main.py'='print(1)';'한글 폴더\메모.txt'='메모';'README.md'='# r';'.env'='SECRET=1';'config\.env.local'='S=2';'keys\server.pem'='pem';'id_ed25519'='key';'node_modules\x\index.js'='x';'sub\build\out.bin'='b';'.git\config'='[core]'}
+    Write-Fixture $walk @{'src\main.py'='print(1)';'한글 폴더\메모.txt'='메모';'README.md'='# r';'.env'='SECRET=1';'config\.env.local'='S=2';'keys\server.pem'='pem';'id_ed25519'='key';'node_modules\x\index.js'='x';'sub\build\out.bin'='b';'sub\.git\config'='[core]'}
     Write-Fixture $outsideDir @{'secret.txt'='outside'}
     $null=New-Item -ItemType Junction -Path (Join-Path $walk 'linked') -Target $outsideDir
     $list=Get-ProjectFileList $walk
     Assert ($list.method -eq 'walk') "non-git folder is walked, got $($list.method)"
     Assert ((@($list.files | ForEach-Object path) -join '|') -eq 'README.md|src\main.py|한글 폴더\메모.txt') "walk files: $(@($list.files | ForEach-Object path) -join '|')"
-    Assert ($list.excluded.secret -eq 4 -and $list.excluded.generated -eq 2 -and $list.excluded.link -eq 1) "walk exclusions: $($list.excluded | ConvertTo-Json -Compress)"
+    # .git 안의 파일은 조용히 빼며 "복원할 수 없는 이름" 수에 넣지 않는다.
+    Assert ($list.excluded.secret -eq 4 -and $list.excluded.generated -eq 2 -and $list.excluded.link -eq 1 -and $list.excluded.unsafe -eq 0) "walk exclusions: $($list.excluded | ConvertTo-Json -Compress)"
     Assert ($list.bytes -eq (($list.files | Measure-Object size -Sum).Sum)) 'walk byte total'
+    $names=Join-Path $testDirectory 'names'
+    Write-Fixture $names @{'메일\보고(7_25~7_27).eml'='mail';'2026~2027.txt'='y';'AB~1.txt'='short';'a.txt'='a'}
+    $list=Get-ProjectFileList $names
+    Assert ((@($list.files | ForEach-Object path) -join '|') -eq '2026~2027.txt|a.txt|메일\보고(7_25~7_27).eml' -and $list.excluded.unsafe -eq 1) "names that cannot be restored are left out and counted: $(@($list.files | ForEach-Object path) -join '|') $($list.excluded | ConvertTo-Json -Compress)"
+    $zipN=Join-Path $testDirectory 'names.zip'; $null=New-ProjectSnapshot $list $zipN
+    $restored=Restore-ProjectSnapshot $zipN (Join-Path $testDirectory 'names-restored') (Join-Path $testDirectory 'rec-names')
+    Assert ($restored.written -eq 3 -and $restored.failed.Count -eq 0 -and [IO.File]::ReadAllText((Join-Path $testDirectory 'names-restored\메일\보고(7_25~7_27).eml')) -eq 'mail') "every backed-up name restores: $($restored | ConvertTo-Json -Compress)"
 
     # 6) Git 저장소: .gitignore를 따르고, 생성 폴더 규칙은 쓰지 않으며, 지워진 추적 파일과 비밀 파일은 뺀다. 하위 폴더는 그 폴더 기준.
     $repo=Join-Path $testDirectory 'repo'
-    Write-Fixture $repo @{'.gitignore'="ignored.log`nout/`n";'a.txt'='a';'ignored.log'='x';'out\x.bin'='x';'.env'='S=1';'node_modules\keep.js'='k';'sub\s.txt'='s';'한글.txt'='한';'deleted.txt'='d'}
+    Write-Fixture $repo @{'.gitignore'="ignored.log`nout/`n";'a.txt'='a';'ignored.log'='x';'out\x.bin'='x';'.env'='S=1';'node_modules\keep.js'='k';'sub\s.txt'='s';'한글.txt'='한';'deleted.txt'='d';'AB~1.txt'='short';'보고(7_25~7_27).eml'='mail';'nested\n.txt'='n'}
     $git=(Get-Command git -CommandType Application | Select-Object -First 1).Source
     & $git -C $repo init -q; Assert ($LASTEXITCODE -eq 0) 'git init'
     & $git -C $repo add deleted.txt; Assert ($LASTEXITCODE -eq 0) 'git add'
+    # 안의 저장소는 git이 'nested/'로 보여 준다. 내용은 옮기지 않고 이름 규칙 수에도 넣지 않는다.
+    & $git -C (Join-Path $repo 'nested') init -q; Assert ($LASTEXITCODE -eq 0) 'nested git init'
     Remove-Item -LiteralPath (Join-Path $repo 'deleted.txt')
     $list=Get-ProjectFileList $repo
     Assert ($list.method -eq 'git') 'git repository uses git ls-files'
-    Assert ((@($list.files | ForEach-Object path) -join '|') -eq '.gitignore|a.txt|node_modules\keep.js|sub\s.txt|한글.txt') "git files: $(@($list.files | ForEach-Object path) -join '|')"
+    Assert ((@($list.files | ForEach-Object path) -join '|') -eq '.gitignore|a.txt|node_modules\keep.js|sub\s.txt|보고(7_25~7_27).eml|한글.txt' -and $list.excluded.unsafe -eq 1) "git files: $(@($list.files | ForEach-Object path) -join '|')"
     Assert ($list.excluded.secret -eq 1) 'secret file excluded even when git would add it'
+    $oldPath=$env:PATH; $env:PATH=''
+    try {
+        Throws { Get-ProjectFileList $repo } 'Git 저장소'
+        Assert ((Get-ProjectFileList $names).method -eq 'walk') 'a folder outside any repository is still walked without git'
+    } finally { $env:PATH=$oldPath }
+    $broken=Join-Path $testDirectory 'broken'; Write-Fixture $broken @{'.git\HEAD'='nonsense';'a.txt'='a'}
+    Throws { Get-ProjectFileList $broken } 'Git 저장소'
+    $leftover=Join-Path $testDirectory 'leftover'; Write-Fixture $leftover @{'.git\objects\x'='o';'a.txt'='a'}
+    $list=Get-ProjectFileList $leftover
+    Assert ($list.method -eq 'walk' -and (@($list.files | ForEach-Object path) -join '|') -eq 'a.txt') 'a .git folder without HEAD is not a repository to git either, so the folder is walked'
     $sub=Get-ProjectFileList (Join-Path $repo 'sub')
     Assert ($sub.method -eq 'git' -and (@($sub.files | ForEach-Object path) -join '|') -eq 's.txt') 'a subfolder of a repository lists paths relative to itself'
     # 260자가 넘는 경로는 .NET이 열지 못하므로 조용히 빼지 않고 읽지 못한 파일로 센다.
@@ -192,6 +216,11 @@ try {
     Throws { Restore-ProjectSnapshot $viaLink $victim (Join-Path $testDirectory 'rec-link') } '링크나 정션'
     Assert ([IO.File]::ReadAllText((Join-Path $outsideDir 'secret.txt')) -eq 'outside') 'a junction inside the target is not written through'
     Throws { Restore-ProjectSnapshot $zipA ([IO.Path]::GetPathRoot($testDirectory)) (Join-Path $testDirectory 'rec-root') } '링크나 정션'
+    $env:USERPROFILE=Join-Path $testDirectory 'home'
+    try {
+        Throws { Restore-ProjectSnapshot $zipA (Join-Path $env:USERPROFILE '.claude\projects\x') (Join-Path $testDirectory 'rec-settings') } '링크나 정션'
+        Assert (-not (Test-Path -LiteralPath $env:USERPROFILE) -and -not (Test-Path -LiteralPath (Join-Path $testDirectory 'rec-settings'))) 'an agent settings folder is never a restore target'
+    } finally { $env:USERPROFILE=$oldProfile }
 
     # 10) 영어 문장.
     Set-Language 'en'
