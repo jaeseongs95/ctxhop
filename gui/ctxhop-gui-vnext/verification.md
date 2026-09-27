@@ -119,6 +119,22 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 - 이전 일곱 판(백엔드 `6AE2432C…`, 패키지 zip `04B80957…`, `6E48C2C2…`, `3ACC8589…`, `F0797242…`, `0A16B4CB…`, `8FAD77C3…`)에 대한 독립 감사는 모두 Gate PASS(차단 결함 없음)였습니다. 위 표의 제목 줄바꿈·버전 일치·복구 임시 파일·결과 표시·성공 경로 시험(1차), 미리보기 엔진 차단·`ChatGPT.exe`·하위 에이전트 표시(2차), 문서 누락(3차), 되살리기 조건·`arg0` 위치·엔진 업데이트 안내 문구(4차), staging 삭제 안전화·수동 진입점 변조 시험·끝 `\` 안내·복구 잠금 안 구조 재확인(6차), 연결 폴더 거부·잠금 안 재확인 시험(7차)은 그 감사의 비차단 발견사항을 반영한 것입니다. `F0797242…` 이후 바뀐 파일은 `backend\desktop_sessions.py`, `backend\Invoke-Desktop.ps1`, `backend\test_desktop_sessions.py`(`test_24`·`test_25`), `backend\test_guard_shim.py`, `Worker.ps1`, `Test-DesktopWorker.ps1`, `Test-DesktopIntegration.ps1`, `README.md`, `verification.md`, 그리고 시험이 다시 그리는 `gui-*-preview.png`입니다. 7차 감사(`8FAD77C3…`)와 패키지 zip 사이에는 시험 두 개(`test_26`, `Test-DesktopWorker`의 연결 폴더 거부)와 이 문서만 바뀌었고, 두 시험은 보호 장치를 뺀 변이 사본에서 실패하는 것을 확인했습니다. 그 뒤 GitHub PR에서 고친 것과 언어 선택은 위의 두 절에 있으며, 각각 별도 독립 감사에서 Gate PASS를 받았습니다.
 - 사용자 결정(2026-09-26): Python 실행 파일 SHA 고정 제거를 수용, 시험 전용 `test_guard_shim.py`는 패키지에 유지.
 
+## 설치 파일
+
+`installer\CtxHop-GUI-vNext.iss`(Inno Setup 6.7.3)로 만듭니다. 사용자별 설치(`%LOCALAPPDATA%\Programs\CtxHop GUI vNext`, 폴더 선택 화면 없음), 64비트 Windows만, GUI 작업이 잡은 `CtxHopGUI-operation` mutex가 있으면 설치·제거를 멈춤, 실행 중인 프로그램을 닫지 않음, 바로가기와 설치 뒤 실행은 System32의 Windows PowerShell을 최소화 상태로 직접 실행합니다. 첫 판(`20260927`)이 32비트 모드였으므로 같은 모드를 유지해 덮어 설치해도 제거 기록이 하나로 남습니다.
+
+이 PC에 실제로 설치된 판을 건드리지 않도록, 시험은 AppId와 이름만 바꾼 시험용 빌드로 했습니다(`TEST` 이름, 나머지 설정 동일). 결과:
+
+- 첫 판 방식의 시험용 빌드 위에 새 판을 `/DIR` 없이 덮어 설치: 이전 폴더를 그대로 쓰고, 제거 프로그램은 `unins000` 하나, 패키지 파일 437개가 해시까지 같고, 인터넷 출처 표시(Zone.Identifier)가 없음. 사용자가 만든 `backend\runtime.json`은 유지.
+- 설치된 복사본에서 시험 6개를 `RemoteSigned`로 실행해 모두 통과.
+- mutex를 잡은 동안 설치와 제거는 종료 코드 1로 멈추고 파일을 바꾸지 않음.
+- 제거 뒤 앱 목록 항목과 바로가기가 사라지고 설치 폴더에는 `backend\runtime.json`만 남음. 인터넷 출처 표시를 붙인 설치 파일로 새로 설치해도 설치된 파일에 표시가 없음.
+- 설치 마법사(한국어·English)는 추가 작업(바탕화면 바로가기, 기본 선택) → 준비 → 완료(실행, 기본 선택) 세 화면입니다. 완료 뒤 실행한 GUI는 64비트 PowerShell에서 최소화되지 않은 창으로 떴고 콘솔 창은 보이지 않았습니다.
+- 바로가기 방식 비교(Windows 11 25H2, 기본 터미널 설정 없음): `.cmd`를 여는 바로가기는 Windows Terminal 창이 잠깐 보였고, PowerShell을 최소화로 직접 여는 바로가기는 콘솔 창이 한 번도 보이지 않았습니다.
+- 덮어 설치·제거 시험 전후로 `%LOCALAPPDATA%\CtxHopGUI`와 실제 설치본은 바뀌지 않았습니다. 마법사 시험에서 띄운 GUI는 시험 폴더를 `LOCALAPPDATA`로 써서 설정을 거기에 저장했습니다.
+
+설치 파일은 서명이 없어 SmartScreen 경고가 뜰 수 있으며, 실제 SmartScreen 창과 다른 PC 설치는 확인하지 않았습니다.
+
 ## 고정 해시 (SHA-256)
 
 | 파일 | SHA-256 |
