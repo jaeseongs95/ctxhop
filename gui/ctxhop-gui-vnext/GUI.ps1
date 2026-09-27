@@ -213,7 +213,8 @@ function Finish-Job {
         if (-not $result.ok) {
             $script:DesktopApplyQueue=@()
             $errorMessage=[string]$result.error
-            if ($result.backendResult) { $errorMessage+="`r`n" + (T 'GuiRecoveryRecord' ($result.backendResult | ConvertTo-Json -Depth 15 -Compress)) }
+            # 진행 중(busy)은 복구할 것이 없으므로 이유만 보인다.
+            if ($result.backendResult -and $result.backendResult.status -ne 'busy') { $errorMessage+="`r`n" + (T 'GuiRecoveryRecord' ($result.backendResult | ConvertTo-Json -Depth 15 -Compress)) }
             throw $errorMessage
         }
         $status.Text=$result.data.message
@@ -473,7 +474,8 @@ $grid.Columns['id'].MinimumWidth=300; $grid.Columns['updated'].MinimumWidth=135
 $selectionLabel=New-Control Label 16 384 988 24 (T 'GuiNoSelection') $main; $selectionLabel.Anchor='Bottom,Left,Right'
 $backupButton=New-Button 16 411 220 (T 'GuiBackupSelected') $main {
     $job=Selected-Job 'Backup'
-    if (Confirm "$(T 'GuiFieldSession' $job.title)`r`n$(T 'GuiFieldAgent' $job.agent)`r`nID: $($job.nativeId)`r`n$(T 'GuiFieldProject' $job.identity)`r`n`r`n$(T 'GuiBackupConfirm')") { Start-Job $job }
+    $question=if ($job.agent -eq 'codex-desktop') { T 'GuiBackupConfirmDesktop' } else { T 'GuiBackupConfirm' }
+    if (Confirm "$(T 'GuiFieldSession' $job.title)`r`n$(T 'GuiFieldAgent' $job.agent)`r`nID: $($job.nativeId)`r`n$(T 'GuiFieldProject' $job.identity)`r`n`r`n$question") { Start-Job $job }
 }
 $restoreButton=New-Button 252 411 220 (T 'GuiPreviewRestore') $main { if ($agent.SelectedIndex -eq 1) { Start-DesktopPreview } else { Start-Job (Selected-Job 'Preview') } }
 $openButton=New-Button 488 411 200 (T 'GuiOpenSelected') $main { Start-Job (Selected-Job 'Open') }

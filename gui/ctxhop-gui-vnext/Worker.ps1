@@ -10,7 +10,7 @@ $RequestFile=$script:VNextRequestFile; $ResultFile=$script:VNextResultFile
 $script:ClaudeJobCore=${function:Invoke-JobCore}
 $script:ClaudeFindExecutable=${function:Find-Executable}
 # Release integration replaces these pins only after reviewing the final candidate.
-$script:DesktopBackendSHA256='AAD33B91CBB92B774982B797D3743A3C92D2617DE7A54CC5986006FD56591DAC'
+$script:DesktopBackendSHA256='8EC5818F6DF26149F49B677E52FD5E3AB7979E135BD81E29E4B516DA363DE999'
 $script:DesktopTransportSHA256='9B14CCD3B33C75EDFD9D424D76FBAF17092364C58721C1BB9C0FD6BA73C7C006'
 function Find-Executable([string]$Name) {
     if ($Name -eq 'ctxhop') { return (Join-Path $PSScriptRoot 'bin\ctxhop-claude.exe') }
@@ -179,8 +179,8 @@ function Invoke-DesktopJob([object]$Job) {
             $stage=New-DesktopStage; $archive=Join-Path $stage 'session.archive'
             try { $export=Invoke-DesktopBackend @('export','--home',$desktopRoot,'--id',$Job.nativeId,'--output',$archive) }
             catch {
-                # 진행 중인 대화(busy)는 쓸 파일이 없거나 버려야 하는 파일뿐이라 staging을 남기지 않는다. 결과의 backendResult로 GUI가 건너뜀으로 센다.
-                if ($_.Exception.Data.Contains('backendResult') -and $_.Exception.Data['backendResult'].status -eq 'busy') { $null=Remove-DesktopStage $stage }
+                # 실패한 내보내기는 쓸 파일이 없거나 버려야 하는 파일뿐이라 평문 staging을 남기지 않는다. 진행 중(busy)이면 결과의 backendResult로 GUI가 건너뜀으로 센다.
+                $null=Remove-DesktopStage $stage
                 throw
             }
             # The backend owns archive semantics; never infer historyMode or recordCount from the list.

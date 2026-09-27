@@ -202,6 +202,15 @@ try {
         Assert (-not $script:BulkSummary -and $status.Text -notlike '전체 백업 끝*') "a failed or cancelled reload drops the bulk summary: $($status.Text)"
     }
     $script:Pending=$null
+    # 한 대화 백업: Codex Desktop은 앱 종료를 묻지 않고, 진행 중(busy)이면 복구 기록 없이 이유만 보인다.
+    Fill-Sessions @(Row $ids[0] 'D:\codex\AI논문' $true $t1)
+    $grid.ClearSelection(); $grid.Rows[0].Selected=$true; Update-Selection
+    $script:StartedJobs=@(); $script:Errors=@(); $script:Asked=''
+    $backupButton.PerformClick()
+    Assert ($script:StartedJobs.Count -eq 1 -and $script:Asked -like '*Codex 앱은 켜 둬도*' -and $script:Asked -notlike '*종료했나요*') "a Codex Desktop backup does not ask to quit the app: $script:Asked"
+    Finish-Fake $script:StartedJobs[0] @{ok=$false;error='이 대화나 하위 대화가 지금 진행 중입니다.';backendResult=@{status='busy';reason='진행 중'}}
+    Assert ($script:Errors.Count -eq 1 -and $script:Errors[0] -like '*진행 중입니다*' -and $script:Errors[0] -notlike '*복구 기록*') "a busy single backup shows only the reason: $($script:Errors -join '|')"
+    $script:Pending=$null
     # 작업 취소는 GUI가 띄운 작업 창과 그 하위 프로세스만 끝낸다. 이름으로 찾아 끄지 않으므로 Codex·Claude 앱은 건드리지 않는다.
     Assert ($source -notmatch 'Stop-Process\s+-Name|Get-Process|\.Kill\(|taskkill') 'GUI never kills processes by name, so the Codex and Claude apps are never force-closed'
     Assert ([regex]::Matches($source,'Stop-Process ').Count -eq 1 -and [regex]::Matches($source,'Stop-ProcessTree \$pending\.process\.Id').Count -eq 1 -and $source -match "action -in @\('Restore','Open'\)\) \{ return \}") 'GUI stops only the worker tree it started, and never during Restore or Open'

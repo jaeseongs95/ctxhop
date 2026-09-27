@@ -716,6 +716,10 @@ class Sessions(unittest.TestCase):
                 f.write(d.encoded({'timestamp': '2026-09-27T05:00:00Z', 'type': 'event_msg',
                     'payload': {'type': kind, 'turn_id': 'turn-open'}}) + b'\n')
 
+        def db_time(t):
+            with sqlite3.connect(self.home / d.FILES[0]) as db:
+                db.execute('UPDATE threads SET updated_at=?, updated_at_ms=? WHERE id=?', (int(t), int(t * 1000), child['data']['thread']['id']))
+
         self.assertEqual(export()[0], 0)
         event('task_started')
         code, busy = export()
@@ -724,9 +728,9 @@ class Sessions(unittest.TestCase):
         self.assertFalse(output.exists())
         old = time.time() - d.ACTIVE_SECONDS - 60
         os.utime(path, (old, old))  # 앱이 연 채로 이어 쓰는 파일은 수정 시각이 늦게 바뀐다. DB 수정 시각이 최근이면 진행 중이다.
+        db_time(time.time())
         self.assertEqual(export()[1]['status'], 'busy')
-        with sqlite3.connect(self.home / d.FILES[0]) as db:  # 앱 강제 종료 등으로 끊긴 채 오래된 턴은 끝난 것으로 본다
-            db.execute('UPDATE threads SET updated_at=?, updated_at_ms=? WHERE id=?', (int(old), int(old * 1000), child['data']['thread']['id']))
+        db_time(old)  # 앱 강제 종료 등으로 끊긴 채 오래된 턴은 끝난 것으로 본다
         self.assertEqual(export()[0], 0)
         event('task_complete')
         self.assertEqual(export()[0], 0)
@@ -741,6 +745,15 @@ class Sessions(unittest.TestCase):
             code, changed = export()
         self.assertEqual((code, changed['status']), (1, 'busy'))
         self.assertIn('변경', changed['reason'])
+        # 앱이 한 줄을 쓰는 도중이라 다시 읽지 못해도 바뀐 것이므로 실패가 아니라 busy다.
+
+        def write_then_partial(family, target):
+            write(family, target)
+            with open(path, 'ab') as f:
+                f.write(b'{"timestamp":"2026-09-27T05:00:01Z","type":"event_')
+        with mock.patch.object(d, 'write_archive', side_effect=write_then_partial):
+            code, partial = export()
+        self.assertEqual((code, partial['status']), (1, 'busy'))
 
 
 if __name__ == '__main__':

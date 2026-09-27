@@ -1040,7 +1040,11 @@ def main():
             assert_idle(home, snapshot)
             snapshot['manifest']['engineVersion'] = engine
             write_archive(snapshot, args.output)
-            if snapshot_hash(selected(home, native_id(args.id))) != snapshot_hash(snapshot):
+            try:
+                changed = snapshot_hash(selected(home, native_id(args.id))) != snapshot_hash(snapshot)
+            except ValueError:
+                changed = True  # 방금 읽은 묶음을 못 읽으면 앱이 한 줄을 쓰는 중이다
+            if changed:
                 raise Busy('내보내는 동안 선택한 세션이 변경됐습니다. 생성 파일을 사용하지 마세요.')
             info = summary(snapshot)
             result = {'status': 'exported', 'metadata': {key: info[key] for key in

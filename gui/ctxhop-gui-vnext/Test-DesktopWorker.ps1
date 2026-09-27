@@ -25,10 +25,10 @@ function Invoke-DesktopBackend([string[]]$Arguments) {
             $file=$Arguments[[array]::IndexOf($Arguments,'--output')+1]
             Assert (-not (Test-Path -LiteralPath $file)) 'export must use new file'
             [IO.File]::WriteAllText($file,'synthetic archive',[Text.UTF8Encoding]::new($false))
-            if ($script:ExportBusy) {
-                # 내보내는 동안 대화가 바뀐 경우: 백엔드는 파일을 만든 뒤 busy로 멈춘다.
-                $e=[InvalidOperationException]::new('이 대화나 하위 대화가 지금 진행 중입니다.')
-                $e.Data['backendResult']=[pscustomobject]@{status='busy';reason='진행 중';token=$null}
+            if ($script:ExportStatus) {
+                # 내보내는 동안 대화가 바뀌었거나(busy) 다른 이유로 막힌 경우(blocked): 백엔드는 파일을 만든 뒤 멈출 수 있다.
+                $e=[InvalidOperationException]::new('내보내기 실패')
+                $e.Data['backendResult']=[pscustomobject]@{status=$script:ExportStatus;reason='fixture';token=$null}
                 throw $e
             }
             return @{metadata=$script:Metadata}
@@ -91,11 +91,13 @@ try {
     $job.action='Backup'; $backup=Invoke-JobCore $job
     Assert ($backup.bundle.id -eq $script:BundleA) 'export publishes opaque encrypted bundle'
     Assert (-not @(Get-ChildItem -LiteralPath $staging -Force)) 'uploaded plaintext backup copy is removed'
-    $script:ExportBusy=$true; $busyError=$null
-    try { $null=Invoke-JobCore $job } catch { $busyError=$_ }
-    $script:ExportBusy=$false
-    Assert ($busyError -and $busyError.Exception.Data['backendResult'].status -eq 'busy') 'a busy export keeps the backend status for the GUI'
-    Assert (-not @(Get-ChildItem -LiteralPath $staging -Force)) 'a busy export leaves no plaintext staging copy'
+    foreach ($status in 'busy','blocked') {
+        $script:ExportStatus=$status; $exportError=$null
+        try { $null=Invoke-JobCore $job } catch { $exportError=$_ }
+        $script:ExportStatus=$null
+        Assert ($exportError -and $exportError.Exception.Data['backendResult'].status -eq $status) "a $status export keeps the backend status for the GUI"
+        Assert (-not @(Get-ChildItem -LiteralPath $staging -Force)) "a $status export leaves no plaintext staging copy"
+    }
     $job.action='Preview'; $preview=Invoke-JobCore $job
     Assert ($preview.preview.status -eq 'conflict') 'backend content comparison controls status'
     $previewStage=Split-Path -Parent $preview.receipt
