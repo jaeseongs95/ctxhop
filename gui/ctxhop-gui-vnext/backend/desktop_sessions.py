@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import time
 import uuid
 import zipfile
 from pathlib import Path
@@ -631,6 +632,35 @@ def assert_closed():
     return engine_version()
 
 
+class Busy(ValueError):
+    """묶음의 대화가 지금 진행 중이라 백업하지 않았다. 실패가 아니라 턴이 끝난 뒤 다시 할 일이다."""
+
+
+ACTIVE_SECONDS = 15 * 60
+
+
+def turn_open(raw):
+    """세션 파일의 마지막 턴이 시작만 되고 끝나지 않았으면 True."""
+    for line in reversed(raw.splitlines()):
+        obj = json.loads(line)
+        if obj.get('type') == 'event_msg' and obj['payload'].get('type') in ('task_started', 'task_complete', 'turn_aborted'):
+            return obj['payload']['type'] == 'task_started'
+    return False
+
+
+def assert_idle(home, family, now=None):
+    """백업은 읽기만 하므로 앱이 켜져 있어도 된다. 묶음의 대화가 턴을 진행 중이면 반쯤 쓰인 기록이 담기므로 멈춘다.
+    앱 강제 종료 등으로 끝나지 않은 턴은 기록이 더 없으므로, 15분 넘게 기록이 없으면 끝난 것으로 본다.
+    앱이 연 채로 이어 쓰는 세션 파일은 Windows가 수정 시각을 늦게 바꾸므로 DB의 수정 시각(updated_at)도 함께 본다."""
+    # ponytail: 15분 넘게 아무것도 쓰지 않는 턴(긴 명령 실행 등)은 진행 중이어도 백업된다. 턴이 끝나면 수정 시각이 바뀌어 다음 전체 백업이 다시 올린다.
+    now = time.time() if now is None else now
+    for item in family['members']:
+        row = item['data']['thread']
+        last = max(rollout_path(home, row['rollout_path']).stat().st_mtime, row['updated_at'], (row.get('updated_at_ms') or 0) / 1000)
+        if turn_open(item['rollout']) and now - last < ACTIVE_SECONDS:
+            raise Busy('이 대화나 하위 대화가 지금 진행 중입니다. 턴이 끝난 뒤 다시 백업하세요.')
+
+
 def engine_version():
     root = Path(os.environ.get('LOCALAPPDATA', '')) / 'OpenAI' / 'Codex' / 'bin'
     candidates = sorted(root.glob('*/codex.exe'), key=lambda p: p.stat().st_mtime_ns, reverse=True)
@@ -1000,17 +1030,18 @@ def main():
         if args.action == 'list':
             result = list_sessions(home, args.search, args.offset, args.limit)
         elif args.action == 'export':
-            engine = assert_closed()
+            # 앱 종료 대신 이 묶음이 진행 중인지(assert_idle)와 내보내는 동안 바뀌지 않았는지를 본다.
+            engine = engine_version()
             if pending(home):
                 raise ValueError('중단된 가져오기를 먼저 복구하세요.')
             snapshot = selected(home, native_id(args.id))
             if snapshot is None:
                 raise ValueError('선택한 세션이 없습니다.')
+            assert_idle(home, snapshot)
             snapshot['manifest']['engineVersion'] = engine
             write_archive(snapshot, args.output)
-            assert_closed()
             if snapshot_hash(selected(home, native_id(args.id))) != snapshot_hash(snapshot):
-                raise ValueError('내보내는 동안 선택한 세션이 변경됐습니다. 생성 파일을 사용하지 마세요.')
+                raise Busy('내보내는 동안 선택한 세션이 변경됐습니다. 생성 파일을 사용하지 마세요.')
             info = summary(snapshot)
             result = {'status': 'exported', 'metadata': {key: info[key] for key in
                 ('sessionId', 'title', 'sourceCwd', 'updatedAt', 'historyMode', 'cliVersion', 'recordCount')},
@@ -1032,7 +1063,7 @@ def main():
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except Exception as exc:
-        result = {'status': 'blocked', 'reason': str(exc), 'token': None}
+        result = {'status': 'busy' if isinstance(exc, Busy) else 'blocked', 'reason': str(exc), 'token': None}
         if args.action == 'apply':
             # 중단된 가져오기의 복구 기록 위치를 GUI 오류와 함께 보여 준다.
             with contextlib.suppress(Exception):

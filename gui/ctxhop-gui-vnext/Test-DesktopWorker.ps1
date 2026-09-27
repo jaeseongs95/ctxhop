@@ -25,6 +25,12 @@ function Invoke-DesktopBackend([string[]]$Arguments) {
             $file=$Arguments[[array]::IndexOf($Arguments,'--output')+1]
             Assert (-not (Test-Path -LiteralPath $file)) 'export must use new file'
             [IO.File]::WriteAllText($file,'synthetic archive',[Text.UTF8Encoding]::new($false))
+            if ($script:ExportBusy) {
+                # 내보내는 동안 대화가 바뀐 경우: 백엔드는 파일을 만든 뒤 busy로 멈춘다.
+                $e=[InvalidOperationException]::new('이 대화나 하위 대화가 지금 진행 중입니다.')
+                $e.Data['backendResult']=[pscustomobject]@{status='busy';reason='진행 중';token=$null}
+                throw $e
+            }
             return @{metadata=$script:Metadata}
         }
         inspect { return [pscustomobject]@{status=$script:State;reason='fixture_content_comparison';token='exact-token-A';source=@{sessionId=$script:Id};target=@{sessionId=$script:Id}} }
@@ -85,6 +91,11 @@ try {
     $job.action='Backup'; $backup=Invoke-JobCore $job
     Assert ($backup.bundle.id -eq $script:BundleA) 'export publishes opaque encrypted bundle'
     Assert (-not @(Get-ChildItem -LiteralPath $staging -Force)) 'uploaded plaintext backup copy is removed'
+    $script:ExportBusy=$true; $busyError=$null
+    try { $null=Invoke-JobCore $job } catch { $busyError=$_ }
+    $script:ExportBusy=$false
+    Assert ($busyError -and $busyError.Exception.Data['backendResult'].status -eq 'busy') 'a busy export keeps the backend status for the GUI'
+    Assert (-not @(Get-ChildItem -LiteralPath $staging -Force)) 'a busy export leaves no plaintext staging copy'
     $job.action='Preview'; $preview=Invoke-JobCore $job
     Assert ($preview.preview.status -eq 'conflict') 'backend content comparison controls status'
     $previewStage=Split-Path -Parent $preview.receipt

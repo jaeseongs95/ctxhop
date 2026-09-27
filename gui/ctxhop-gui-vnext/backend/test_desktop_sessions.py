@@ -3,10 +3,12 @@ import argparse
 import copy
 import io
 import json
+import os
 import shutil
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -343,7 +345,7 @@ class Sessions(unittest.TestCase):
 
     def test_19_cli_contract_for_gui(self):
         output = self.root / 'exported.zip'
-        with mock.patch.object(d, 'assert_closed', return_value='0.158.0-alpha.2.1'):
+        with mock.patch.object(d, 'engine_version', return_value='0.158.0-alpha.2.1'):
             code, result = self.run_cli('export', '--home', str(FIXTURE), '--id', self.thread_id, '--output', str(output))
         self.assertEqual(code, 0)
         self.assertEqual(set(result['metadata']), {'sessionId', 'title', 'sourceCwd', 'updatedAt', 'historyMode', 'cliVersion', 'recordCount'})
@@ -369,7 +371,7 @@ class Sessions(unittest.TestCase):
         with sqlite3.connect(self.home / d.FILES[0]) as db:
             db.execute('UPDATE threads SET title=?, name=? WHERE id=?', ('첫 줄\r\n둘째 줄\x00끝',) * 2 + (self.thread_id,))
         output = self.root / 'multiline.zip'
-        with mock.patch.object(d, 'assert_closed', return_value=d.VERSIONS[-1]):
+        with mock.patch.object(d, 'engine_version', return_value=d.VERSIONS[-1]):
             code, result = self.run_cli('export', '--home', str(self.home), '--id', self.thread_id, '--output', str(output))
         self.assertEqual(code, 0)
         self.assertNotRegex(result['metadata']['title'], '[\x00\r\n]')
@@ -529,7 +531,7 @@ class Sessions(unittest.TestCase):
         self.assertEqual(self.preview(archive)['status'], 'equal')
         # 내보내기: 부모를 고르면 묶음 전체, 하위 대화 ID는 차단
         output = self.root / 'family-export.zip'
-        with mock.patch.object(d, 'assert_closed', return_value=d.VERSIONS[-1]):
+        with mock.patch.object(d, 'engine_version', return_value=d.VERSIONS[-1]):
             code, exported = self.run_cli('export', '--home', str(self.home), '--id', self.thread_id, '--output', str(output))
             self.assertEqual((code, exported['metadata']['historyMode']), (0, 'paginated;family=3'))
             code, blocked = self.run_cli('export', '--home', str(self.home), '--id', self.ids(family)[1],
@@ -695,6 +697,50 @@ class Sessions(unittest.TestCase):
             (self.root / 'native-children.json').write_text(json.dumps(read, ensure_ascii=False, indent=2), encoding='utf-8')
         finally:
             rpc.close()
+
+    def test_35_export_with_app_running_skips_active_turns(self):
+        # 백업은 앱 종료를 보지 않는다. 묶음의 대화가 턴을 진행 중이면(최근 15분 안에 기록) busy로 멈추고 파일을 만들지 않는다.
+        self.apply(self.save(self.family([0]), 'family'))
+        child = d.selected(self.home, self.thread_id)['members'][1]
+        path = d.rollout_path(self.home, child['data']['thread']['rollout_path'])
+        output = self.root / 'export.zip'
+
+        def export():
+            output.unlink(missing_ok=True)
+            with mock.patch.object(d, 'assert_no_writers', side_effect=ValueError('Codex 앱이 실행 중')), \
+                    mock.patch.object(d, 'engine_version', return_value=d.VERSIONS[-1]):
+                return self.run_cli('export', '--home', str(self.home), '--id', self.thread_id, '--output', str(output))
+
+        def event(kind):
+            with open(path, 'ab') as f:
+                f.write(d.encoded({'timestamp': '2026-09-27T05:00:00Z', 'type': 'event_msg',
+                    'payload': {'type': kind, 'turn_id': 'turn-open'}}) + b'\n')
+
+        self.assertEqual(export()[0], 0)
+        event('task_started')
+        code, busy = export()
+        self.assertEqual((code, busy['status']), (1, 'busy'))
+        self.assertIn('진행 중', busy['reason'])
+        self.assertFalse(output.exists())
+        old = time.time() - d.ACTIVE_SECONDS - 60
+        os.utime(path, (old, old))  # 앱이 연 채로 이어 쓰는 파일은 수정 시각이 늦게 바뀐다. DB 수정 시각이 최근이면 진행 중이다.
+        self.assertEqual(export()[1]['status'], 'busy')
+        with sqlite3.connect(self.home / d.FILES[0]) as db:  # 앱 강제 종료 등으로 끊긴 채 오래된 턴은 끝난 것으로 본다
+            db.execute('UPDATE threads SET updated_at=?, updated_at_ms=? WHERE id=?', (int(old), int(old * 1000), child['data']['thread']['id']))
+        self.assertEqual(export()[0], 0)
+        event('task_complete')
+        self.assertEqual(export()[0], 0)
+        self.assertEqual(sorted(self.ids(d.read_archive(output))), sorted(self.ids(d.selected(self.home, self.thread_id))))
+        # 내보내는 동안 묶음이 바뀌면 busy로 멈춘다.
+        write = d.write_archive
+
+        def write_then_change(family, target):
+            write(family, target)
+            event('user_message')
+        with mock.patch.object(d, 'write_archive', side_effect=write_then_change):
+            code, changed = export()
+        self.assertEqual((code, changed['status']), (1, 'busy'))
+        self.assertIn('변경', changed['reason'])
 
 
 if __name__ == '__main__':
