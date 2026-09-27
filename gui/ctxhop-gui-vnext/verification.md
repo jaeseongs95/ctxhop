@@ -111,6 +111,8 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 
 감사 지적을 고친 뒤 다시 실행했고 모두 종료 코드 0이었습니다: `Test-Strings` 1342, `Test-DesktopWorker` 61, `Test-DesktopGUI` 27, `Test-ClaudeGUI` 115, `Test-ClaudeWorker` 41 groups·672 assertions, `Test-DesktopIntegration` 32.
 
+폴더 선택 오류를 고친 뒤 6개를 `powershell.exe -NoProfile -STA -ExecutionPolicy RemoteSigned -File`로 다시 실행했고 모두 종료 코드 0이었습니다: `Test-Strings` 1342, `Test-DesktopWorker` 61, `Test-DesktopGUI` 27, `Test-ClaudeGUI` 119, `Test-ClaudeWorker` 41 groups·672 assertions, `Test-DesktopIntegration` 32. 고친 문제는 빈 칸·공백·잘못된 문자가 든 경로에서 **폴더 선택** 세 곳과 **다른 PC용 초대 만들기**가 `LiteralPath` 또는 `Illegal characters in path` 오류를 내던 것입니다. 새 `Test-ClaudeGUI` 검사는 네 버튼을 빈 칸·공백·`a|b`로 눌러 보며, 이전 검사식으로 되돌린 변이 사본에서 실패합니다.
+
 - 전송(`bin\ctxhop.exe`)은 PowerShell 테스트에서 mock이고, 성공 경로의 mock은 bundle 메타데이터 규칙(정확한 7개 필드, BOM 없음, NUL·줄바꿈 없음)을 확인합니다.
 - `backend\test_guard_shim.py`는 시험 전용이며 앱 종료 검사와 엔진 버전 조회만 바꿉니다(엔진은 환경변수 값). Worker·GUI는 이 파일을 호출하지 않습니다. `Test-DesktopIntegration.ps1`의 성공 경로를 다른 PC에서도 다시 돌릴 수 있도록 패키지에 남겨 두었습니다.
 - native 시험은 격리 `CODEX_HOME`과 localhost 고정 응답만 사용했고 외부 모델 호출은 없습니다. 검사 뒤 `%USERPROFILE%\.ctxhop`, 공유 `v1\keyfile`의 수정 시각이 이전과 같고, `%LOCALAPPDATA%\CtxHopGUI`와 임시 fixture가 남지 않은 것을 확인했습니다. PowerShell 7은 이 PC에 없어 실행하지 않았습니다.
@@ -128,7 +130,7 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 | `bin\ctxhop-claude.exe` (`0.2.0-gui.1`, 변경 없음) | `A1702CE1839AF90C0DDB87E7C07F1BE7899BE8EBDD9117FE680D2EC9739C233D` |
 | `ClaudeWorker.ps1` (안정판 `D08E9A15…`에서 문장을 `Strings.ps1`로 옮기고 언어 적용·실패 이유·겹친 등록 차단·등록 해제·암호 변경/초기화 추가) | `97405AABD4B533974D070CA6F7A69B1C1CE537F094489D4924FC32F1F8977823` |
 | `Worker.ps1` (결과 파일 경로 보관 수정, 언어 선택) | `C8AA63D2F8F853A77B5AD48F6E74468E777FA3EDF76C8DF5AC0539F81FE59EA8` |
-| `GUI.ps1` (언어 선택, 사용성 개선) | `DFD43E49D2436D25C1B682D3BAA0DC2DCD5C9A8F1DE0217F423103BCEE827B5E` |
+| `GUI.ps1` (언어 선택, 사용성 개선, 폴더 선택 빈 칸 오류 수정) | `507B9BF23CBC4CED31568F2B76AD3DE4044E842B865424F7D4A54D5FCD1F04CC` |
 | `Strings.ps1` (한국어·영어 문장 표) | `E04493D126B9EEBEE2A8A4B56C6A42B814E01766DB70FFCD634483382A4BE75A` |
 
 `transport-source\`와 `bin\ctxhop.exe`는 노트북 세션 결과를 그대로 옮겼습니다. 이 PC에는 Go가 없어 Go 시험을 다시 실행하지 않았고, 기록된 결과(`transport-source\verification-results\`: 전체 suite 통과, race는 gcc 부재로 미실행)를 근거로 둡니다.
@@ -143,6 +145,6 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 - 가져오기 중 DB 파일이 새로 만들어지다 중단되면 `recover`가 멈출 수 있습니다. 이때는 README의 수동 절차(pending 폴더 옮기기)를 따릅니다.
 - 건너뛰거나 취소한 미리보기의 staging 폴더(내려받은 평문 사본)는 자동으로 지우지 않습니다. 필요 없으면 사용자가 지웁니다.
 - 2차 감사 중 실제 DB를 읽기 전용으로 읽다가 SQLite `disk I/O error`가 한 번 났고 재시도에서는 정상이었습니다. 목록이 실패하면 다시 불러오면 됩니다.
-- 실행 파일(`Run-CtxHop-GUI-vNext.cmd`)은 `-ExecutionPolicy RemoteSigned`를 쓰며 이 설정으로는 시험하지 않았습니다. 브라우저로 받은 zip처럼 인터넷 출처 표시가 붙은 파일은 실행이 막힐 수 있습니다(zip 속성에서 차단 해제 후 풀기).
+- 실행 파일(`Run-CtxHop-GUI-vNext.cmd`)과 설치 파일의 바로가기는 `-ExecutionPolicy RemoteSigned`를 씁니다. 폴더 선택 수정 뒤의 시험 6개는 이 설정으로 통과했습니다. 브라우저로 받은 zip을 그대로 풀면 인터넷 출처 표시 때문에 실행이 막힐 수 있습니다(zip 속성에서 차단 해제 후 풀기). 설치 파일로 설치한 파일에는 이 표시가 붙지 않습니다.
 - `gui-*-preview.png` 스크린샷에는 이 PC 이름과 사용자 경로가 보입니다.
 - Python은 260자를 넘는 경로를 읽지 못합니다(Windows 긴 경로 설정이 꺼진 경우). 아주 긴 데이터 폴더 경로에서는 가져오기가 실패하고 복구가 필요할 수 있습니다.
