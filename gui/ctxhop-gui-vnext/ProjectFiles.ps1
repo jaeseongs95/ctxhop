@@ -70,7 +70,9 @@ function Read-ClaudeWorkData([string[]]$Files) {
     # Claude Code 대화 파일(과 하위 에이전트 파일)의 cwd와, 편집 도구가 절대 경로로 고친 파일. 줄마다 JSON을 풀면 느려서 필요한 줄만 푼다.
     $cwds=[Collections.Generic.List[string]]::new(); $edits=[Collections.Generic.List[string]]::new()
     foreach ($file in $Files) {
-        foreach ($line in [IO.File]::ReadLines($file,[Text.Encoding]::UTF8)) {
+        # Claude Code가 쓰는 중일 수 있으므로 쓰기를 막지 않고 읽는다.
+        $reader=[IO.StreamReader]::new((Open-ProjectSource $file),[Text.Encoding]::UTF8)
+        try { while ($null -ne ($line=$reader.ReadLine())) {
             $match=[regex]::Match($line,'"cwd"\s*:\s*"((?:[^"\\]|\\.)*)"')
             if ($match.Success) { $cwd=[regex]::Unescape($match.Groups[1].Value); if (-not $cwds.Contains($cwd)) { $cwds.Add($cwd) } }
             if ($line -notmatch '"name"\s*:\s*"(Edit|Write|MultiEdit|NotebookEdit)"') { continue }
@@ -80,7 +82,7 @@ function Read-ClaudeWorkData([string[]]$Files) {
                 $path=if ($block.input.file_path) {$block.input.file_path} else {$block.input.notebook_path}
                 if ($path -is [string] -and $path -match '^([A-Za-z]:[\\/]|\\\\)' -and -not $edits.Contains($path)) { $edits.Add($path) }
             }
-        }
+        } } finally { $reader.Dispose() }
     }
     return [pscustomobject]@{cwds=$cwds.ToArray();edits=$edits.ToArray()}
 }
