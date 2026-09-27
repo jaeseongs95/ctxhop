@@ -10,7 +10,7 @@ $RequestFile=$script:VNextRequestFile; $ResultFile=$script:VNextResultFile
 $script:ClaudeJobCore=${function:Invoke-JobCore}
 $script:ClaudeFindExecutable=${function:Find-Executable}
 # Release integration replaces these pins only after reviewing the final candidate.
-$script:DesktopBackendSHA256='8EC5818F6DF26149F49B677E52FD5E3AB7979E135BD81E29E4B516DA363DE999'
+$script:DesktopBackendSHA256='5B2E3796FBFF5F44DBD20C86363226A95A8027018432898B040E590FABF49A80'
 $script:DesktopTransportSHA256='9B14CCD3B33C75EDFD9D424D76FBAF17092364C58721C1BB9C0FD6BA73C7C006'
 function Find-Executable([string]$Name) {
     if ($Name -eq 'ctxhop') { return (Join-Path $PSScriptRoot 'bin\ctxhop-claude.exe') }
@@ -130,7 +130,7 @@ function Assert-DesktopInspect([object]$Report) {
 function Get-DesktopSessions([object]$Job,[string]$DesktopRoot) {
     $offset=0; $items=@()
     do {
-        $page=Invoke-DesktopBackend @('list','--home',$DesktopRoot,'--search',[string]$Job.search,'--offset',[string]$offset,'--limit','200')
+        $page=Invoke-DesktopBackend @('list','--home',$DesktopRoot,"--search=$($Job.search)",'--offset',[string]$offset,'--limit','200')
         if (($page.total -isnot [int] -and $page.total -isnot [long]) -or $page.total -lt 0 -or $page.sessions -isnot [array] -or $page.sessions.Count -gt 200) { throw (T 'WkListResponseInvalid') }
         foreach ($row in $page.sessions) {
             Assert-NativeId $row.id

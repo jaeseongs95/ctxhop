@@ -9,7 +9,7 @@ Back up Claude Code and Codex Desktop conversations from one window and restore 
 ## What you need
 
 - Windows with Windows PowerShell 5.1.
-- A folder that both PCs can see, such as a Google Drive folder. The GUI keeps the encrypted backups there.
+- A folder that both PCs can see, such as a Google Drive folder. The GUI keeps the encrypted backups there. Anyone who can write to this folder can plant backups or make later backups readable to them, so use a folder of your own that you do not share (see the security review in `verification.md`).
 - For **Codex Desktop**:
   - Codex Desktop engine `0.158.0-alpha.2` or `0.158.0-alpha.2.1`. The PC that made a backup and the PC that restores it must run **exactly the same** engine version. Otherwise the restore is blocked before anything is written.
   - Python from the Codex Desktop install (`%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe`). To use another Python 3.10 or later, put `{"pythonPath":"absolute path"}` in `backend\runtime.json` on that PC. The GUI does not use Python from PATH and does not install one.

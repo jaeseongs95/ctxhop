@@ -745,6 +745,27 @@ class Sessions(unittest.TestCase):
             code, changed = export()
         self.assertEqual((code, changed['status']), (1, 'busy'))
         self.assertIn('변경', changed['reason'])
+        # 처음 읽을 때 앱과 겹쳐 한 번 실패하면 다시 읽어 백업한다.
+        real, calls = d.selected, []
+
+        def flaky(home, thread_id):
+            calls.append(thread_id)
+            if len(calls) == 1:
+                raise ValueError('이력 파일 위치가 범위를 벗어났습니다.')
+            return real(home, thread_id)
+        with mock.patch.object(d, 'selected', side_effect=flaky), mock.patch.object(d.time, 'sleep'):
+            self.assertEqual(export()[0], 0)
+        self.assertEqual(len(calls), 3)
+        # 내보낸 뒤 세션 파일이 옮겨져(보관 등) 다시 읽지 못해도 바뀐 것이므로 busy다.
+        moved = path.with_name(path.name + '.moved')
+
+        def write_then_move(family, target):
+            write(family, target)
+            path.rename(moved)
+        with mock.patch.object(d, 'write_archive', side_effect=write_then_move):
+            code, gone = export()
+        moved.rename(path)
+        self.assertEqual((code, gone['status']), (1, 'busy'))
         # 앱이 한 줄을 쓰는 도중이라 다시 읽지 못해도 바뀐 것이므로 실패가 아니라 busy다.
 
         def write_then_partial(family, target):
@@ -754,6 +775,18 @@ class Sessions(unittest.TestCase):
         with mock.patch.object(d, 'write_archive', side_effect=write_then_partial):
             code, partial = export()
         self.assertEqual((code, partial['status']), (1, 'busy'))
+        # 다시 읽어도 못 읽는 세션 파일은 진행 중으로 숨기지 않고 실패로 보고한다.
+        with mock.patch.object(d.time, 'sleep'):
+            code, broken = export()
+        self.assertEqual((code, broken['status']), (1, 'blocked'))
+        self.assertFalse(output.exists())
+
+    def test_36_writer_check_runs_system_powershell(self):
+        # 이름만 주면 python.exe 폴더와 현재 폴더의 같은 이름 파일이 먼저 실행되므로 System32의 전체 경로여야 한다.
+        with mock.patch.dict(os.environ, {'SystemRoot': r'C:\Windows'}), \
+                mock.patch.object(d.subprocess, 'run', return_value=mock.Mock(returncode=0)) as run:
+            d.assert_no_writers()
+        self.assertEqual(run.call_args[0][0][0], r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe')
 
 
 if __name__ == '__main__':

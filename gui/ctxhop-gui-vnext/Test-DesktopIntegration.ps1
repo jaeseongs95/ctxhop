@@ -63,6 +63,8 @@ try {
     Assert ($row[0].historyMode -eq 'paginated' -and $row[0].children -eq 0) 'native fixture is paginated and has no subagents'
     $found=Invoke-JobCore @{action='List';agent='codex-desktop';home=$fixtureHome;search=$thread.Substring(0,13)}
     Assert (@($found.sessions).Count -eq 1) 'search is passed to backend'
+    $dash=Invoke-JobCore @{action='List';agent='codex-desktop';home=$fixtureHome;search='-x'}
+    Assert (@($dash.sessions).Count -eq 0) 'search starting with - is a value, not a backend option'
 
     $failure=$null; try { Invoke-JobCore @{action='Backup';agent='codex-desktop';home=$fixtureHome;nativeId=$thread} } catch { $failure=$_ }
     # 백업은 앱 종료를 보지 않는다. Codex 앱이 켜져 있어도 격리한 LOCALAPPDATA에 엔진이 없다는 이유로만 멈춰야 한다.

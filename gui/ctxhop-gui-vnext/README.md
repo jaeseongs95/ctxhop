@@ -9,7 +9,7 @@ Claude Code와 Codex Desktop 대화를 한 창에서 백업하고 다른 PC에�
 ## 준비물
 
 - Windows PowerShell 5.1이 있는 Windows
-- 두 PC가 함께 보는 폴더(예: Google Drive 폴더). 암호화한 백업을 여기에 둡니다.
+- 두 PC가 함께 보는 폴더(예: Google Drive 폴더). 암호화한 백업을 여기에 둡니다. 이 폴더에 쓸 수 있는 사람은 백업을 바꿔 넣거나 이후 백업을 자기가 읽을 수 있게 만들 수 있으므로, 다른 사람과 공유하지 않는 본인 폴더를 씁니다(`verification.md`의 보안 전수조사 참고).
 - **Codex Desktop**을 쓸 때:
   - Codex Desktop 엔진 `0.158.0-alpha.2` 또는 `0.158.0-alpha.2.1`. 백업한 PC와 복원할 PC의 엔진 버전이 **정확히 같아야** 하며, 다르면 쓰기 전에 차단합니다.
   - Codex Desktop이 설치한 Python(`%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe`). 다른 Python 3.10 이상을 쓰려면 그 PC의 `backend\runtime.json`에 `{"pythonPath":"절대경로"}`를 둡니다. PATH의 Python이나 자동 설치는 쓰지 않습니다.

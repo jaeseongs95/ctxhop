@@ -619,7 +619,9 @@ exit 0"""
 def assert_no_writers():
     if os.name != 'nt':
         raise ValueError('Windows에서만 실제 내보내기/가져오기를 실행할 수 있습니다.')
-    result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand',
+    # 이름만 주면 python.exe 폴더와 현재 폴더를 System32보다 먼저 찾으므로 전체 경로로 부른다.
+    shell = os.path.join(os.environ['SystemRoot'], 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    result = subprocess.run([shell, '-NoProfile', '-NonInteractive', '-EncodedCommand',
         base64.b64encode(CLOSED_CHECK.encode('utf-16-le')).decode()],
         capture_output=True, text=True, encoding='utf-8', errors='replace',
         creationflags=subprocess.CREATE_NO_WINDOW)
@@ -1034,16 +1036,22 @@ def main():
             engine = engine_version()
             if pending(home):
                 raise ValueError('중단된 가져오기를 먼저 복구하세요.')
-            snapshot = selected(home, native_id(args.id))
+            thread_id = native_id(args.id)
+            unreadable = (ValueError, OSError, sqlite3.Error)
+            try:
+                snapshot = selected(home, thread_id)
+            except unreadable:
+                time.sleep(1)  # 앱이 세션 파일과 이력 DB를 쓰는 사이에 읽었을 수 있으므로 한 번 더 읽는다. 또 실패하면 실패로 보고한다.
+                snapshot = selected(home, thread_id)
             if snapshot is None:
                 raise ValueError('선택한 세션이 없습니다.')
             assert_idle(home, snapshot)
             snapshot['manifest']['engineVersion'] = engine
             write_archive(snapshot, args.output)
             try:
-                changed = snapshot_hash(selected(home, native_id(args.id))) != snapshot_hash(snapshot)
-            except ValueError:
-                changed = True  # 방금 읽은 묶음을 못 읽으면 앱이 한 줄을 쓰는 중이다
+                changed = snapshot_hash(selected(home, thread_id)) != snapshot_hash(snapshot)
+            except unreadable:
+                changed = True  # 방금 읽은 묶음을 못 읽으면 앱이 쓰는 중이거나 옮겼다
             if changed:
                 raise Busy('내보내는 동안 선택한 세션이 변경됐습니다. 생성 파일을 사용하지 마세요.')
             info = summary(snapshot)
