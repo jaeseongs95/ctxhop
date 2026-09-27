@@ -92,10 +92,13 @@ if ($job.action -eq 'Preview') {
 }
 if ($job.action -eq 'Restore') { $data.restored=@{session=$job.nativeId;agent=$job.agent} }
 if ($job.action -eq 'MoveStore') {
+    # 폴더 이름으로 결과를 고른다: 'fail store'는 거부(설정 그대로), 'lost result'는 설정을 바꾼 뒤 결과 없이 끝난다.
+    if ($job.store -like '*fail store*') { @{ok=$false;error='fixture move refused'}|ConvertTo-Json|Set-Content -LiteralPath $ResultFile -Encoding UTF8; exit 1 }
     $file=Join-Path $env:CTXHOP_CONFIG_DIR 'config.json'
     $config=Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
     $config.remote.path=$job.store
     $config | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $file -Encoding UTF8
+    if ($job.store -like '*lost result*') { exit 1 }
 }
 @{ok=$true;data=$data}|ConvertTo-Json -Depth 10|Set-Content -LiteralPath $ResultFile -Encoding UTF8
 '@
@@ -317,16 +320,46 @@ if ($job.action -eq 'MoveStore') {
     ($script:Buttons | Where-Object Text -eq '현재 연결 확인').PerformClick()
     Finish-Fixture
     Assert ($store.Text -eq 'D:\fixture store') 'Checking the connection puts the store in use back in the box.'
+    $store.Text = 'D:\typed but not applied'
+    $statusJob = Base-Job 'Status'; $statusJob.fixtureDelay = 20000
+    Start-Job $statusJob
+    $statusProcess = $script:Pending.process
+    $script:Answers = @($true)
+    $cancelButton.PerformClick()
+    Assert ($statusProcess.WaitForExit(5000)) 'The connection check stops when cancelled.'
+    Finish-Job
+    Assert ($store.Text -eq 'D:\fixture store' -and $status.Text -eq (T 'GuiJobCancelled')) 'A cancelled connection check also puts the store in use back in the box.'
     $store.Text = 'D:\new store'
     $script:Answers = @($false)
     $moveButton.PerformClick()
     Assert ($null -eq $script:Pending -and $script:LastConfirm -like '*D:\fixture store*D:\new store*') 'Moving the store asks first and names both folders.'
+    Assert ($store.Text -eq 'D:\fixture store') 'Declining the move puts the store in use back in the box.'
+    $store.Text = 'D:\new store'
     $script:Answers = @($true)
     $moveButton.PerformClick()
     Assert ($script:Pending.job.action -eq 'MoveStore' -and $script:Pending.job.store -eq 'D:\new store') 'Move store sends the chosen folder.'
+    Assert (-not $cancelButton.Enabled) 'Moving the store cannot be cancelled, like a restore.'
     $store.Text = 'D:\typed while moving'
     Finish-Fixture
     Assert ($store.Text -eq 'D:\new store' -and $status.Text -eq 'fixture: MoveStore' -and $script:Errors.Count -eq 0) 'After the move the box shows the store the settings now use.'
+    # 옮기기가 실패하거나 결과를 받지 못해도 칸은 입력한 값이 아니라 설정의 실제 저장소를 보인다.
+    $store.Text = 'D:\fail store'
+    $moveJob = Base-Job 'MoveStore'; $moveJob.fixtureDelay = 3000
+    Start-Job $moveJob
+    $cancelButton.Enabled = $true; $script:Answers = @($true)
+    $cancelButton.PerformClick()
+    $cancelButton.Enabled = $false; $script:Answers = @()
+    Assert (-not $script:Pending.cancelled -and -not $script:Pending.process.HasExited) 'The cancel handler also leaves a store move running.'
+    Finish-Fixture
+    Assert ($store.Text -eq 'D:\new store' -and $script:Errors.Count -eq 1 -and $script:Errors[0] -eq 'fixture move refused') 'A refused move shows the error and the store still in use.'
+    $script:Errors = @()
+    $store.Text = 'D:\lost result'
+    $script:Answers = @($true)
+    $moveButton.PerformClick()
+    $store.Text = 'D:\typed while moving'
+    Finish-Fixture
+    Assert ($store.Text -eq 'D:\lost result' -and $script:Errors.Count -eq 1 -and $script:Errors[0] -eq (T 'GuiWorkerAborted')) 'A move whose result was lost after the settings changed shows the changed settings.'
+    $script:Errors = @()
     [IO.File]::WriteAllBytes($configFile, $configBefore)
     $tabs.SelectedTab = $main; [Windows.Forms.Application]::DoEvents()
     # 빈 칸·공백·잘못된 경로에서 폴더 선택과 초대 만들기를 눌러도 오류 없이 대화 상자를 연다.

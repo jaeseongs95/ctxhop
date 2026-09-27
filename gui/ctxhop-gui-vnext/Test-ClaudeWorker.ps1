@@ -771,6 +771,62 @@ try {
         Assert-Throws { Invoke-Job (New-MoveJob $bad) } '원본과 다릅니다' 'a copy with another hash stops the move'
         Assert ((Get-Tree $bad) -eq '' -and $script:CtxCalls.Count -eq $calls) 'a bad copy is neither kept nor followed by relocate'
     }
+    Test-Group 'store move checks real folders, links and the settings folder before copying anything' {
+        function Write-StoreFile([string]$Root,[string]$Relative,[string]$Text) { $path=Join-Path $Root $Relative; $null=New-Item -ItemType Directory -Force -Path (Split-Path $path); [IO.File]::WriteAllText($path,$Text) }
+        function Get-Tree([string]$Root) { if (-not (Test-Path -LiteralPath $Root)) { return '' }; @(Get-ChildItem -LiteralPath $Root -Recurse -File -Force | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($Root.Length)+'='+[IO.File]::ReadAllText($_.FullName) }) -join '|' }
+        function New-MoveJob([string]$Store) { $job=New-Job 'MoveStore'; $job | Add-Member -NotePropertyName store -NotePropertyValue $Store; return $job }
+        $links=[Collections.Generic.List[string]]::new()
+        function New-Link([string]$Path,[string]$Target) { $null=New-Item -ItemType Junction -Path $Path -Target $Target; $links.Add($Path) }
+        function Remove-Link([string]$Path) { [IO.Directory]::Delete($Path); $null=$links.Remove($Path) }
+        $configFile=Join-Path $env:CTXHOP_CONFIG_DIR 'config.json'
+        function Set-Store([string]$Path) { Write-TestJson $configFile ([pscustomobject]@{syncConfig='disabled'; remote=[pscustomobject]@{type='dir';path=$Path}; projects=$script:Config.projects}) }
+        $old=Join-Path $script:CaseRoot 'drive\old store'; Write-StoreFile $old 'v1\keyfile' 'key'; Write-StoreFile $old 'v1\desktop-bundles\d\1\metadata' 'one'
+        $inside=Join-Path $old 'inside'; $null=New-Item -ItemType Directory -Path $inside
+        $secret=Join-Path $script:CaseRoot 'outside secret'; Write-StoreFile $secret 'private\data' 'not a store file'
+        $sink=Join-Path $script:CaseRoot 'outside sink'; $null=New-Item -ItemType Directory -Path $sink
+        Set-Store $old
+        $oldTree=Get-Tree $old; $secretTree=Get-Tree $secret; $configBytes=[IO.File]::ReadAllText($configFile); $calls=$script:CtxCalls.Count
+        try {
+            # 옛 저장소 안의 정션: 저장소 밖 파일을 새 저장소로 복사하지 않는다.
+            New-Link (Join-Path $old 'v1\desktop-bundles\leak') $secret
+            $new1=Join-Path $script:CaseRoot 'drive\new one'; $null=New-Item -ItemType Directory -Path $new1
+            Assert-Throws { Invoke-Job (New-MoveJob $new1) } '링크나 정션' 'a junction inside the old store stops the move'
+            Assert ((Get-Tree $new1) -eq '') 'nothing from outside the old store is copied'
+            Remove-Link (Join-Path $old 'v1\desktop-bundles\leak')
+            # 새 저장소의 v1 자체나 그 안의 정션: 저장소 밖에 파일을 만들지 않는다.
+            $new2=Join-Path $script:CaseRoot 'drive\new two'; $null=New-Item -ItemType Directory -Path $new2
+            New-Link (Join-Path $new2 'v1') $sink
+            Assert-Throws { Invoke-Job (New-MoveJob $new2) } '링크나 정션' 'a junction as the new v1 stops the move'
+            Remove-Link (Join-Path $new2 'v1')
+            $null=New-Item -ItemType Directory -Path (Join-Path $new2 'v1')
+            New-Link (Join-Path $new2 'v1\desktop-bundles') $sink
+            Assert-Throws { Invoke-Job (New-MoveJob $new2) } '링크나 정션' 'a junction inside the new v1 stops the move'
+            Assert ((Get-Tree $sink) -eq '') 'nothing is written outside the new store'
+            Remove-Link (Join-Path $new2 'v1\desktop-bundles')
+            # 다른 이름(정션)으로 가린 같은 폴더·중첩 폴더도 실제 위치로 알아본다.
+            $alias=Join-Path $script:CaseRoot 'drive\alias of old'; New-Link $alias $old
+            Assert-Throws { Invoke-Job (New-MoveJob $alias) } '이미' 'the current store under another name is refused'
+            Assert-Throws { Invoke-Job (New-MoveJob (Join-Path $alias 'inside')) } '품고 있어' 'a folder inside the store under another name is refused'
+            Set-Store $alias
+            Assert-Throws { Invoke-Job (New-MoveJob $old) } '이미' 'the configured store under another name is recognized'
+            Set-Store $old
+            # ctxhop 설정 폴더와 겹치면 복사하기 전에 멈춘다.
+            $settingsAlias=Join-Path $script:CaseRoot 'drive\alias of settings'; New-Link $settingsAlias $env:CTXHOP_CONFIG_DIR
+            $settingsInside=Join-Path $env:CTXHOP_CONFIG_DIR 'sub'; $null=New-Item -ItemType Directory -Path $settingsInside
+            foreach ($target in @($env:CTXHOP_CONFIG_DIR,$settingsInside,$settingsAlias)) {
+                Assert-Throws { Invoke-Job (New-MoveJob $target) } '설정 폴더' "a store overlapping the settings folder is refused: $target"
+            }
+            Assert (-not (Test-Path -LiteralPath (Join-Path $env:CTXHOP_CONFIG_DIR 'v1')) -and -not (Test-Path -LiteralPath (Join-Path $settingsInside 'v1'))) 'nothing is copied into the settings folder'
+            Assert ($script:CtxCalls.Count -eq $calls -and [IO.File]::ReadAllText($configFile) -eq $configBytes) 'refused moves never reach ctxhop and keep the settings'
+            Assert ((Get-Tree $old) -eq $oldTree -and (Get-Tree $secret) -eq $secretTree -and (Get-Tree $sink) -eq '') 'the old store and the outside folders are unchanged'
+            # 저장소 폴더 자체를 정션으로 골라도 실제 폴더에 복사하고, ctxhop에는 고른 경로를 넘긴다.
+            $real=Join-Path $script:CaseRoot 'real new'; $null=New-Item -ItemType Directory -Path $real
+            $viaLink=Join-Path $script:CaseRoot 'drive\linked new'; New-Link $viaLink $real
+            $result=Invoke-Job (New-MoveJob $viaLink)
+            Assert ($result.store -eq $viaLink -and $result.copied -eq 2 -and ($script:CtxCalls[-1].Arguments -join '|') -eq "remote|relocate|--path|$viaLink") "a store folder reached through a junction moves: $($result | ConvertTo-Json -Compress)"
+            Assert ((Get-Tree $real) -eq '\v1\desktop-bundles\d\1\metadata=one|\v1\keyfile=key') "the files land in the real folder: $(Get-Tree $real)"
+        } finally { foreach ($link in @($links)) { [IO.Directory]::Delete($link) } }
+    }
     Test-Group 'failure reason is read from the same command log line after the start time' {
         $logs=Join-Path $env:CTXHOP_CONFIG_DIR 'logs'; New-Item -ItemType Directory -Path $logs | Out-Null
         $log=Join-Path $logs ('ctxhop-{0}.log' -f (Get-Date).ToString('yyyy-MM-dd'))

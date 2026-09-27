@@ -178,7 +178,8 @@ function Start-Job([hashtable]$Job) {
     $script:Pending = @{process=$process; job=$Job; request=$request; result=$result}
     foreach ($button in $script:Buttons) { $button.Enabled=$false }
     # 복원은 중간에 끊으면 복구 기록이 남고, 열기는 사용자가 대화를 끝내야 하므로 취소하지 않는다.
-    $cancelButton.Enabled=($Job.action -notin @('Restore','Open'))
+    # 저장소 옮기기도 복사 도중 멈추면 새 폴더에 일부 파일만 남으므로 취소하지 않는다.
+    $cancelButton.Enabled=($Job.action -notin @('Restore','Open','MoveStore'))
     $agent.Enabled=$false; $project.ReadOnly=$true; $identity.ReadOnly=$true
     $projectPicker.Enabled=$false; $desktopHome.ReadOnly=$true
     $progress.Style='Marquee'
@@ -321,12 +322,7 @@ function Finish-Job {
             }
             Bind { Load-Bindings }
             Unbind { Load-Bindings }
-            Status {
-                $log.AppendText("$(T 'GuiStatusLog' $result.data.device $result.data.store $result.data.syncConfig)`r`n")
-                Show-ConnectedStore
-            }
-            Setup { Show-ConnectedStore }
-            MoveStore { Show-ConnectedStore }
+            Status { $log.AppendText("$(T 'GuiStatusLog' $result.data.device $result.data.store $result.data.syncConfig)`r`n") }
             Backup {
                 # 큰 작업 폴더가 있으면 아직 아무것도 올리지 않았다. 목록 창에서 고르면 대화와 파일을 함께 올린다.
                 if ($result.data.needsProjectConfirm) {
@@ -357,6 +353,8 @@ function Finish-Job {
     finally {
         foreach ($file in @($pending.request,$pending.result)) { if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force } }
         $pending.process.Dispose()
+        # 성공·실패·취소 모두 칸을 실제 설정으로 돌린다. 결과를 못 받았어도 설정은 이미 바뀌었을 수 있다.
+        if ($pending.job.action -in @('Status','Setup','MoveStore')) { Show-ConnectedStore }
     }
 }
 function Add-DesktopReview([hashtable]$Job,[object]$Preview,[string]$Receipt,[object]$Project=$null) {
@@ -588,7 +586,7 @@ function Start-StoreMove {
     $job=Base-Job 'MoveStore'
     $config=Get-CtxConfig
     if (-not $config -or -not $config.remote.path) { throw (T 'CwSetupFirst') }
-    if (Confirm (T 'GuiMoveStoreConfirm' ([string]$config.remote.path) $job.store "`r`n")) { Start-Job $job }
+    if (Confirm (T 'GuiMoveStoreConfirm' ([string]$config.remote.path) $job.store "`r`n")) { Start-Job $job } else { Show-ConnectedStore }
 }
 Load-Bindings
 $null=New-Control Label 16 60 74 25 (T 'GuiProjectLabel') $main
@@ -686,7 +684,7 @@ function Stop-ProcessTree([int]$Id) {
 }
 $cancelButton=New-Button 900 591 148 (T 'GuiCancelJob') $form {
     $pending=$script:Pending
-    if (-not $pending -or $pending.job.action -in @('Restore','Open')) { return }
+    if (-not $pending -or $pending.job.action -in @('Restore','Open','MoveStore')) { return }
     # 전체 백업은 처음 누르면 지금 대화를 마친 뒤 멈추고, 한 번 더 누르면 아래처럼 작업 창을 바로 끝낸다.
     if ($script:Bulk -and -not $script:Bulk.stop) { $script:Bulk.stop=$true; $status.Text=(T 'GuiBulkStopping'); return }
     if ($pending.job.action -ne 'List' -and -not (Confirm (T 'GuiCancelConfirm' $pending.job.action))) { return }

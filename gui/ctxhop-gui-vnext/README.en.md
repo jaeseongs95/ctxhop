@@ -53,8 +53,11 @@ Use the **Connection · Invite** tab.
 6. **Move store**: once connected, the **Drive store path** box shows the store this PC really uses (the ctxhop settings). Changing only the text in the box changes nothing. To move to another folder, choose a new folder in the shared folder (empty, or one where the other PC has already moved the store) and click **Move store**.
    - Only the files of the current store that the new folder lacks are copied, and each copy is checked against the original hash. Then ctxhop switches the connection only after it finds the key file of the same connection in the new folder and this PC is authorized by it (`ctxhop remote relocate`). The password, recovery key and device authorization stay the same.
    - If the new folder holds a store file with the same name but different content (another store, for example), nothing is copied and the move stops. A folder with the store of another connection is never used.
+   - The move also stops before copying if the new folder overlaps the ctxhop settings folder, or if the `v1` folder of the old or the new store is a link or junction or holds one. Folders are compared by where they really are, so the same folder chosen under another name (through a junction, for example) is recognized.
+   - Like a restore, a move cannot be cancelled. If the PC shuts down while copying, some files and `.part` temporary files can be left in the new folder. Click **Move store** again with the same new folder to copy only the missing files; the `.part` files can be deleted.
    - The old folder is not deleted. Delete it yourself after both PCs have moved.
-   - The other PC keeps using the old folder until it moves too. After Drive has finished syncing, click **Move store** there with the same new folder. Backups that PC made in the old folder in the meantime are copied to the new folder then.
+   - The other PC keeps using the old folder until it moves too. After Drive has finished syncing, click **Move store** there with the same new folder. Of the backups that PC made in the old folder in the meantime, the files the new folder lacks are copied then.
+   - Until both PCs have moved, do not change or reset the password and do not add or remove devices. If the same file (the key file, for example) changes in only one of the folders, its content differs and the second PC's move stops.
    - Invites made after the move point to the new folder.
 
 ## Back up and restore Claude Code conversations
