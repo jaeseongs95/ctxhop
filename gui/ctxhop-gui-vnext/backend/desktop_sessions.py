@@ -207,21 +207,23 @@ def settings_record(obj):
 
 
 def resume_settings(parsed):
-    """엔진이 이어 쓸 때 쓰는 승인·권한 값(마지막 turn_context 위에 그 뒤 설정 기록을 덮은 것). 기록이 없으면 None."""
-    result = None
-    for obj in parsed:
-        settings = settings_record(obj)
-        if settings is None:
-            continue
-        if obj['type'] == 'turn_context' or result is None:
-            result = {}
-        for key in SETTINGS_KEYS:
-            if key == 'sandbox_policy' and obj['type'] != 'turn_context':
-                continue  # thread_settings_applied에는 없는 필드
-            if key in settings:
-                result[key] = settings[key]
-            else:
-                result.pop(key, None)
+    """엔진이 이어 쓸 때 쓰는 값(persisted_resume_settings.rs). 설정 기록이 없으면 None.
+    승인 정책·권한 프로필은 마지막 설정 기록의 값이다. 승인자는 그 기록에 없거나 null이면 앞 기록 중 가장 가까운 값이다.
+    sandbox_policy·permission_profile은 엔진이 읽지 않지만 마지막 turn_context에 함께 옮겨 쓰는 값이다."""
+    found = [settings_record(obj) for obj in parsed]
+    last = max((i for i, settings in enumerate(found) if settings is not None), default=None)
+    if last is None:
+        return None
+    result = {key: found[last].get(key) for key in ('approval_policy', 'approvals_reviewer', 'active_permission_profile')}
+    for settings in reversed(found[:last]):
+        if result['approvals_reviewer'] is not None:
+            break
+        if settings is not None:
+            result['approvals_reviewer'] = settings.get('approvals_reviewer')
+    context = next((found[i] for i in range(len(parsed) - 1, -1, -1) if parsed[i]['type'] == 'turn_context'), None)
+    for key in ('sandbox_policy', 'permission_profile'):
+        if context is not None and key in context:
+            result[key] = context[key]
     return result
 
 
@@ -770,11 +772,21 @@ def pending(home):
 
 
 def pending_ids(home):
-    """중단된 가져오기 기록이 쓰려던 대화 ID(형식 1은 대화 하나, 형식 2는 members)."""
+    """중단된 가져오기 기록이 쓰려던 대화 ID(형식 1은 대화 하나, 형식 2는 members).
+    대상을 확정할 수 없는 기록(알 수 없는 형식, 빈 목록, 잘못된 ID)이 하나라도 있으면 None이다(모든 백업을 막는다)."""
     ids = set()
     for path in pending(home):
         journal = json.loads(path.read_text(encoding='utf-8'))
-        ids.update(entry['id'] for entry in journal.get('members', [journal]))
+        entries = [journal] if 'version' not in journal else journal.get('members') if journal['version'] == 2 else None
+        if not isinstance(entries, list) or not 1 <= len(entries) <= MAX_MEMBERS:
+            return None
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get('id'), str):
+                return None
+            try:
+                ids.add(native_id(entry['id']))
+            except ValueError:
+                return None
     return ids
 
 
@@ -828,7 +840,9 @@ def mapped(item, cwd, path, current, sessions=()):
             if key == 'sandbox_policy' and obj['type'] != 'turn_context':
                 continue
             settings.pop(key, None)
-            value = want.get(key, SAFE_SETTINGS[key] if key in REQUIRED_SETTINGS[obj['type']] else None)
+            value = want.get(key)
+            if value is None and key in REQUIRED_SETTINGS[obj['type']]:
+                value = SAFE_SETTINGS[key]  # 빈 값(없음·null)이면 엔진이 앞 기록(원래 PC 값)으로 돌아가므로 채운다
             if value is not None:
                 settings[key] = copy.deepcopy(value)
         changes[index] = encoded(obj) + b'\n'
@@ -1146,7 +1160,10 @@ def main():
             if snapshot is None:
                 raise ValueError('선택한 세션이 없습니다.')
             # 중단된 가져오기는 그 기록의 대화만 반쯤 쓰였을 수 있으므로 그 대화만 막고, 다른 대화의 백업은 막지 않는다.
-            if pending_ids(home) & {item['data']['thread']['id'] for item in snapshot['members']}:
+            blocked = pending_ids(home)
+            if blocked is None:
+                raise ValueError('복구 기록이 손상돼 대상 대화를 알 수 없습니다. 중단된 가져오기를 먼저 복구하세요.')
+            if blocked & {item['data']['thread']['id'] for item in snapshot['members']}:
                 raise ValueError('중단된 가져오기를 먼저 복구하세요.')
             assert_idle(home, snapshot)
             snapshot['manifest']['engineVersion'] = engine
