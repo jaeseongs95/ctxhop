@@ -362,6 +362,50 @@
   - 링크가 아닌 재분석 지점(OneDrive 자리표시자 등)은 막지 않습니다. 실제 OneDrive 폴더에서는 시험하지 않았습니다. 이 PC의 실제 Drive 저장소는 링크 확인을 통과했습니다(읽기만 함).
   - `Worker.ps1`의 복원 전 버전 고정(gui.3)은 변이 시험에 넣지 않았습니다. 같은 실행 파일의 해시 고정이 함께 막습니다.
 
+## 복원 안전 수정 (2026-09-28, `20260927.6` 공개 뒤)
+
+- **발견 경위**: 전체 백업이 대화 3개에서 "동적 도구가 등록된 세션은 현재 이식 지원 범위 밖입니다"로 실패했습니다. 원인을 조사하면서 잠재 결함 두 개를 더 찾았습니다. 사용자는 세 가지 모두 고치기로 했습니다.
+- **동적 도구 차단 제거**
+  - 원인: 옛 Codex 앱(엔진 0.146~0.152.1, 2026-07-29~09-02)은 앱 도구(`codex_app` 17개, `plugin_management` 1개)를 세션 헤더의 `dynamic_tools`로 등록했습니다. 이후 판은 이 도구를 번들 MCP 서버로 옮겼습니다. 이 PC 대화 3,103개 중 166개가 해당합니다. 백엔드는 헤더에 `dynamic_tools`가 있으면 모두 막았습니다.
+  - 확인한 사실:
+    - 엔진은 이어 쓸 때 헤더의 도구를 다시 등록합니다.
+    - 지금 Codex 앱은 이 도구 호출에 실패 응답("no longer available through dynamic tools")을 돌려주고 턴을 이어 갑니다(앱 번들에서 확인).
+    - DB의 `thread_dynamic_tools`는 엔진이 읽지 않습니다. 복원도 이 표에 쓰지 않습니다.
+  - 바꾼 것: `validate_member`의 차단을 지웠습니다. 미리보기 이유 칸에 `옛 Codex 앱 도구 기록 포함(이어서 대화 가능)`을 붙입니다.
+- **중단된 가져오기 기록이 백업을 막음**
+  - 원인: 복구 기록(`pending`)이 하나라도 남으면 모든 대화의 백업이 멈췄습니다.
+  - 바꾼 것: 백업은 그 기록이 쓰려던 대화(형식 1은 대화 하나, 형식 2는 `members`)가 묶음에 들어 있을 때만 멈춥니다. 복원(`apply`)은 전처럼 모두 멈춥니다.
+- **복원한 대화에 원래 PC의 승인·권한·작업 폴더가 되살아남**
+  - 원인: 엔진(`0.158.0-alpha.2`)은 대화를 이어 쓸 때 다음처럼 읽습니다.
+    - 승인 정책·승인자·권한 프로필: 세션 파일의 **마지막 설정 기록**(`turn_context` 또는 `thread_settings_applied`)에서 읽습니다(`persisted_resume_settings.rs`). 권한은 그 기록의 `active_permission_profile` ID로 정합니다(`thread_processor.rs`의 `load_and_apply_persisted_resume_metadata`).
+    - 작업 폴더와 작업 루트: 이 대화 소유의 마지막 `thread_settings_applied`에서 읽습니다.
+    - 백엔드는 마지막 `turn_context`의 승인·샌드박스 값만 바꿨습니다. 그래서 `active_permission_profile`과, 그 뒤에 있는 `thread_settings_applied`의 `never`·`:danger-full-access`·원래 PC 작업 루트가 그대로 적용됐습니다.
+    - 이 PC 최근 대화 300개는 모두 `never`이고, 292개가 `:danger-full-access`입니다.
+  - 재현: `native_probe.py`는 이제 `unsafe-source-policy` 실행에서 원래 PC 설정(`approval_policy = "never"`, `default_permissions = ":danger-full-access"`)으로 대화를 만듭니다. 새 프로세스에서 요청 값 없이 한 번 다시 열어, 실제 대화처럼 끝에 `thread_settings_applied`가 남게 했습니다. 이전 백엔드로 복원하면 `test_02`가 `dangerFullAccess != readOnly`로 실패했습니다.
+  - 바꾼 것(`mapped`): 세 기록 모두에 이 PC 값을 넣습니다. 세 기록은 마지막 `turn_context`, 마지막 설정 기록, 이 대화 소유의 마지막 `thread_settings_applied`입니다.
+    - 작업 폴더와 작업 루트는 복원 때 고른 작업 폴더입니다.
+    - 승인·권한은 경우에 따라 다릅니다.
+      - 처음 가져오는 대화는 `untrusted`·읽기 전용·`:read-only`입니다.
+      - 이미 있는 대화를 덮어쓰면 그 대화가 지금 이어 쓸 때 쓰는 값을 그대로 옮깁니다.
+    - 기록 종류마다 엔진이 요구하는 값은 늘 채웁니다. `turn_context`의 승인자(`approvals_reviewer`)는 선택 필드지만 비어 있으면 엔진이 앞 기록(원래 PC 값, 예: `auto_review`)을 쓰므로 늘 채웁니다(값이 없으면 `user`).
+    - `canonical`은 이 필드들을 비교에서 뺍니다. 그래서 복원한 뒤에도 "동일한 이력"으로 봅니다.
+- **시험**
+  - 백엔드 `test_suite.py`는 두 실행(일반·원래 PC 전체 권한)에서 모두 통과했습니다(각 40개, 실제 엔진 `0.158.0-alpha.2.1`, 격리 홈).
+    - 새 시험:
+      - `test_38`: 모든 설정 기록 교체, 소유 기록의 작업 폴더, 덮어쓸 때 이 PC 값 유지, 이 PC 대화에 승인자가 없어도 앞 턴의 `auto_review`로 돌아가지 않음.
+      - `test_39`: 동적 도구 대화의 미리보기 안내, 복원, 다시 백업.
+      - `test_40`: 중단 기록의 대화만 백업 차단.
+    - `test_02`는 작업 폴더를 넘기지 않고 다시 열어도 가져온 작업 폴더·`untrusted`·읽기 전용인지 확인합니다.
+    - `test_01`의 위치 확인은 "같은 줄의 같은 자리"를 비교하도록 바꿨습니다. 턴 뒤에 설정 기록이 있으면 이전 계산식이 맞지 않기 때문입니다.
+  - 대상 PC의 `config.toml` 네 조합(없음, `default_permissions`만, `sandbox_mode`만, 이 PC와 같은 둘 다 + `never`)에서 복원한 대화를 앱처럼 요청 값 없이 열었습니다. 네 경우 모두 가져온 작업 폴더, `untrusted`, `readOnly`, `:read-only`였습니다.
+  - 변이 9개가 두 실행 모두에서 기대한 실패로 잡혔습니다: 설정 기록 교체 없음, `active_permission_profile` 빠짐, 소유 기록의 작업 폴더 그대로, 중단 기록이 모든 백업 차단, 동적 도구 차단, 안내 없음, `canonical`이 `turn_context`만 정리, `turn_context` 승인자를 채우지 않음, 덮어쓸 때 이 PC 값 무시.
+  - PowerShell 시험 7종 통과: Strings 1768, ProjectFiles 145, DesktopWorker 201, DesktopGUI 80, ClaudeGUI 165, ClaudeWorker 828, DesktopIntegration 49(실제 백엔드·엔진).
+- **제한**
+  - 이 판의 백업에 동적 도구 대화가 있으면 이전 판 GUI는 복원하지 않고 멈춥니다. 두 PC 모두 이 판 이상이어야 합니다.
+  - 이미 있는 대화를 덮어쓸 때 옮기는 값은 이 PC 대화의 세션 파일 기준입니다. 앱이 DB에만 둔 설정은 보지 않습니다.
+  - 실제 두 PC 왕복과 앱 화면 확인은 아직 하지 않았습니다.
+  - 백업할 때 엔진 버전 정확 일치와 DB 구조 고정은 그대로입니다. Codex가 업데이트되면 새 판이 나올 때까지 백업·복원이 멈춥니다.
+
 ## 실행한 검사 (Windows PowerShell 5.1, Python 3.12.14 Codex 번들, 엔진 `0.158.0-alpha.2.1`)
 
 | 검사 | 결과 | 원시 로그 |
@@ -471,13 +515,13 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 
 | 파일 | SHA-256 |
 |---|---|
-| `backend\desktop_sessions.py` (Worker 고정, 하위 대화 묶음, 앱이 켜져 있어도 백업, PowerShell 전체 경로, 작업 폴더 보고) | `C1775722000097548E0B6C72BB000D6552F151E17A232BC1FBEA687A2D74881A` |
+| `backend\desktop_sessions.py` (Worker 고정, 하위 대화 묶음, 앱이 켜져 있어도 백업, PowerShell 전체 경로, 작업 폴더 보고, 동적 도구 허용·중단 기록은 그 대화만 차단·승인·권한·작업 폴더 설정 기록 교체) | `153D541595B71F85F86988790317DACF0BFD4C530747F49F9BB832EA11C39B9A` |
 | `backend\Invoke-Desktop.ps1` (수동 복구 진입점, 검색어 전달 수정) | `9A7D7849D82CF16616154F4D5DCAE802156FDD9FB9977790722A57781D83E501` |
 | `backend\schema.json` (백엔드 고정) | `D24ACAC2105569B5B9CFDABC5259DB8217B9A9F175D7D2B57A09A2D4F76FA0A2` |
 | `bin\ctxhop.exe` (bundle 전송, Worker 고정, 변경 없음) | `9B14CCD3B33C75EDFD9D424D76FBAF17092364C58721C1BB9C0FD6BA73C7C006` |
 | `bin\ctxhop-claude.exe` (`0.2.0-gui.3`, 대화 옆 폴더, 저장소 옮기기, ClaudeWorker 고정) | `45186B1017A0F8969DFC27D248351C275ACB0DFEBF21276AD968E03DC84E650B` |
 | `ClaudeWorker.ps1` (안정판 `D08E9A15…`에서 문장을 `Strings.ps1`로 옮기고 언어 적용·실패 이유·겹친 등록 차단·등록 해제·암호 변경/초기화·대화 옆 폴더 복원·ctxhop 출력 UTF-8 읽기·저장소 옮기기와 실제 위치·링크 확인 추가) | `4E601995783B6890901D09C5A0CF4F2B4D71D9618A2D9939310EB8D0379D0CB7` |
-| `Worker.ps1` (결과 파일 경로 보관 수정, 언어 선택, 하위 대화 수, 실패한 백업의 staging 정리, 검색어 전달 수정, 프로젝트 파일, 폴더별 미리보기·복원 격리, 16GiB 초과 폴더도 먼저 묻기, 복원 실행 파일 gui.3 고정) | `88C448D64F4942807A3E4647B559F6F849D9C6BDFF3E1F9A118B34E93D6F2F92` |
+| `Worker.ps1` (결과 파일 경로 보관 수정, 언어 선택, 하위 대화 수, 실패한 백업의 staging 정리, 검색어 전달 수정, 프로젝트 파일, 폴더별 미리보기·복원 격리, 16GiB 초과 폴더도 먼저 묻기, 복원 실행 파일 gui.3 고정, 백엔드 고정 갱신) | `88754210C1A2772BCF31C48473B83870CB1EEDE579EEDC138E011C03EC632D95` |
 | `ProjectFiles.ps1` (프로젝트 파일 폴더 고르기·목록·압축·비교·복원, 백업·복원 같은 이름 규칙, git 실패 시 폴더 제외, 작업·복원 폴더와 그 위의 링크·정션 거부) | `586D4D50A1B85FDCFEAB602362B6F2029EBB71C1F47DBAC88ABE23D24BACF74A` |
 | `GUI.ps1` (언어 선택, 사용성 개선, 폴더 선택 빈 칸 오류 수정, 전체 백업, 프로젝트 필터, 하위 대화 표시, 페이지 버튼, 진행 중 대화 집계, 프로젝트 파일, 여러 대화 한꺼번에 복원 수정, 큰 폴더 대화 보류 목록 창, 저장소 칸은 ctxhop 설정 기준·저장소 옮기기) | `AFDC0E31945B6AB15C19EB49D4BB61B2F2532C8E49B70867680DDA0E7C715424` |
 | `Strings.ps1` (한국어·영어 문장 표) | `4ED6732AC70F9AC3F855167CA28291974C6307BA09CB57C547CD9FE895E39CA1` |
@@ -489,7 +533,7 @@ PowerShell 시험은 `powershell.exe -NoProfile -ExecutionPolicy Bypass [-STA] -
 - **두 PC 실제 왕복 미실행**: 실제 사용자 대화의 백업→Drive→복원→앱 화면 확인은 실행하지 않았습니다. 이 PC에서 Codex 앱이 실행 중이라 실제 앱 종료 검사를 통과하는 CLI 성공 경로도 실행하지 않았고, 같은 코드는 guard를 바꾼 시험으로만 확인했습니다. 새로 가져온 세션이 Desktop 앱 사이드바에 보이는지도 확인하지 못했습니다.
 - 두 PC의 Codex Desktop 엔진 버전이 같아야 가져올 수 있습니다. 첫 왕복 전에 노트북 버전을 확인하세요.
 - 두 SQLite DB와 세션 파일의 원자적 갱신은 보장하지 않으며, 중단 기록과 선택 세션 원본으로 복구합니다. 복구가 멈추는 경우는 README의 수동 절차를 따릅니다(GUI 복구 화면 없음).
-- 동적 도구가 등록된 세션, 알 수 없는 DB 구조, 지원하지 않는 엔진 버전은 차단합니다. 하위 에이전트 대화는 부모 대화와 한 묶음으로만 옮기며, 묶음 안의 대화 하나라도 차단 대상이면 묶음 전체를 차단합니다. 이 PC 실제 목록의 묶음 검사 결과는 위 "하위 에이전트 대화 묶음" 절에 있습니다.
+- 알 수 없는 DB 구조와 지원하지 않는 엔진 버전은 차단합니다. 옛 앱의 동적 도구 기록이 있는 대화는 위 "복원 안전 수정" 절처럼 옮깁니다. 하위 에이전트 대화는 부모 대화와 한 묶음으로만 옮기며, 묶음 안의 대화 하나라도 차단 대상이면 묶음 전체를 차단합니다. 이 PC 실제 목록의 묶음 검사 결과는 위 "하위 에이전트 대화 묶음" 절에 있습니다.
 - **묶음의 작업 폴더**: 복원하면 묶음의 모든 대화가 복원 때 고른 작업 폴더를 씁니다. 하위 대화가 원래 다른 폴더에서 실행됐다면 그 폴더 정보는 이 PC에 옮겨지지 않습니다.
 - **Claude 대화 옆 폴더**: 파일을 그대로 복사하며 파일 안의 경로를 이 PC에 맞게 바꾸지 않습니다. 이전 판으로 만든 백업에는 옆 폴더가 없습니다. 옆 폴더는 gui.2 이후 판(지금 gui.3)의 `push`만 올리므로, 그 뒤 다른 ctxhop(예: Claude Code hook의 자동 push)이 대화만 올렸다면 복원되는 옆 폴더는 마지막 GUI 백업 때의 내용입니다. 이때 바뀌는 이 PC 파일의 원본은 `.companion` 폴더에 남습니다.
 - **프로젝트 파일**: 위 "프로젝트 파일 함께 옮기기" 절의 제한을 보세요.
