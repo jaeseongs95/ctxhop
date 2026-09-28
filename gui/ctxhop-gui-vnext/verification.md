@@ -403,7 +403,8 @@
     - `test_02`는 작업 폴더를 넘기지 않고 다시 열어도 가져온 작업 폴더·`untrusted`·읽기 전용인지 확인합니다.
     - `test_01`의 위치 확인은 "같은 줄의 같은 자리"를 비교하도록 바꿨습니다. 턴 뒤에 설정 기록이 있으면 이전 계산식이 맞지 않기 때문입니다.
   - 대상 PC의 `config.toml` 네 조합(없음, `default_permissions`만, `sandbox_mode`만, 이 PC와 같은 둘 다 + `never`)에서 복원한 대화를 앱처럼 요청 값 없이 열었습니다. 네 경우 모두 가져온 작업 폴더, `untrusted`, `readOnly`, `:read-only`였습니다.
-  - 변이 15개가 두 실행 모두에서 기대한 실패로 잡혔습니다: 설정 기록 교체 없음, `active_permission_profile` 빠짐, 소유 기록의 작업 폴더 그대로, 중단 기록이 모든 백업 차단, 동적 도구 차단, 안내 없음, `canonical`이 `turn_context`만 정리, `turn_context` 승인자를 채우지 않음, 승인자 앞 기록 무시, null 승인자 그대로 둠, 중단 기록 ID 검증 없음, 빈 `members` 허용, 감사 전(`fac9c55`) `resume_settings`·`pending_ids` 그대로, 덮어쓸 때 이 PC 값 무시. 변이마다 사본·실행기·원시 로그를 남겼습니다.
+  - 변이 15개가 두 실행 모두에서 기대한 실패로 잡혔습니다: 설정 기록 교체 없음, `active_permission_profile` 빠짐, 소유 기록의 작업 폴더 그대로, 중단 기록이 모든 백업 차단, 동적 도구 차단, 안내 없음, `canonical`이 `turn_context`만 정리, `turn_context` 승인자를 채우지 않음, 승인자 앞 기록 무시, null 승인자 그대로 둠, 중단 기록 ID 검증 없음, 빈 `members` 허용, 감사 전(`fac9c55`) `resume_settings`·`pending_ids` 그대로, 덮어쓸 때 이 PC 값 무시. 변이마다 사본·실행기·원시 로그를 남겼습니다. 다만 감사 전 함수 두 개를 되돌린 변이는 각각 승인자 키 누락 오류와 오류 문구 차이로 실패했으므로, 그 자체를 결함 재현으로 보지는 않습니다. 실제 동작 차이는 승인자 앞 기록 무시·null 승인자·빈 `members` 변이가 보여 줍니다.
+  - 재감사(r24, `ecf299a`)는 Gate PASS였습니다(로컬 소스 단계, 공개·설치·두 PC 왕복 승인은 아님).
   - 첫 독립 감사(r23, `fac9c55`)는 FAIL이었습니다. 지적은 R23-01(덮어쓸 때 이 PC의 앞 기록 승인자를 잃음), R23-02(손상된 중단 기록을 빈 차단 목록으로 받음), R23-N1(`untrusted`를 "매번 승인"으로 설명)이었고 모두 위처럼 고쳤습니다.
   - PowerShell 시험 7종 통과: Strings 1768, ProjectFiles 145, DesktopWorker 201, DesktopGUI 80, ClaudeGUI 165, ClaudeWorker 828, DesktopIntegration 49(실제 백엔드·엔진).
 - **제한**
